@@ -14,6 +14,7 @@
 
 #include <map>
 #include <algorithm>
+#include <memory>
 
 using std::map;
 
@@ -165,7 +166,20 @@ ActorUtil::LoadFromNode(const XNode* _pNode, Actor* pParentActor)
 {
 	ASSERT(_pNode != nullptr);
 
-	auto node = *_pNode;
+	// Only the legacy XML path writes to the node (GetLegacyActorClass may
+	// append a Texture attribute), so only that path gets its own copy. Every
+	// other node is read in place: XNode's copy constructor duplicates all
+	// attributes and all descendants, and this function runs once per actor,
+	// so an unconditional copy here would deep-copy each node once for itself
+	// and once for every actor that encloses it.
+	const auto bLegacy = (_pNode->GetAttr("_LegacyXml") != nullptr);
+	std::unique_ptr<XNode> pLegacyCopy;
+	const XNode* pReadNode = _pNode;
+	if (bLegacy) {
+		pLegacyCopy = std::make_unique<XNode>(*_pNode);
+		pReadNode = pLegacyCopy.get();
+	}
+	const XNode& node = *pReadNode;
 
 	// Remove this in favor of using conditionals in Lua. -Chris
 	// There are a number of themes out there that depend on this (including
@@ -181,9 +195,8 @@ ActorUtil::LoadFromNode(const XNode* _pNode, Actor* pParentActor)
 	if (!bHasClass)
 		bHasClass = node.GetAttrValue("Type", sClass);
 
-	const auto bLegacy = (node.GetAttr("_LegacyXml") != nullptr);
 	if (!bHasClass && bLegacy)
-		sClass = GetLegacyActorClass(&node);
+		sClass = GetLegacyActorClass(pLegacyCopy.get());
 
 	const auto iter = g_pmapRegistrees->find(sClass);
 	if (iter == g_pmapRegistrees->end()) {
