@@ -70,6 +70,14 @@ static Preference<std::string> searchURL("BaseOnlineAPISearchUrl",
 										 "https://search.etternaonline.com");
 static Preference<unsigned int> automaticSync("automaticScoreSync", 1);
 
+// This build never sends a score to the online service. An upload carries the
+// SHA-256 of the running binary (exe_hash in ScoreToJSON), which differs from
+// the release binary's, and the service publishes no rule for self-built
+// clients. Every upload path ends in UploadScore or UploadBulkScores, so
+// those two and ShouldUploadScores are the only places that test this.
+// Scores are still saved in the local profile.
+static constexpr bool SCORE_UPLOAD_ENABLED = false;
+
 //
 static const std::string UI_HOME_PAGE = "https://etternaonline.com";
 static const std::string PROJECT_HOME_PAGE =
@@ -3391,7 +3399,7 @@ DownloadManager::GetRankedChartkeysRequest(std::function<void(void)> callback,
 bool
 DownloadManager::ShouldUploadScores()
 {
-	return LoggedIn() && automaticSync &&
+	return SCORE_UPLOAD_ENABLED && LoggedIn() && automaticSync &&
 		   GamePreferences::m_AutoPlay == PC_HUMAN;
 }
 
@@ -4028,6 +4036,15 @@ DownloadManager::UploadBulkScores(std::vector<HighScore*> hsList,
 	static constexpr auto CALL_ENDPOINT = API_UPLOAD_SCORE_BULK;
 	static constexpr auto CALL_PATH = API_UPLOAD_SCORE_BULK;
 
+	if (!SCORE_UPLOAD_ENABLED) {
+		Locator::getLogger()->info(
+		  "Score upload is disabled in this build. Skipped {} scores",
+		  hsList.size());
+		if (callback)
+			callback();
+		return;
+	}
+
 	Locator::getLogger()->info("Creating BulkUploadScore request for {} scores",
 							   hsList.size());
 	if (!LoggedIn()) {
@@ -4252,6 +4269,15 @@ DownloadManager::UploadScore(HighScore* hs,
 
 	static constexpr auto CALL_ENDPOINT = API_UPLOAD_SCORE;
 	static constexpr auto CALL_PATH = API_UPLOAD_SCORE;
+
+	if (!SCORE_UPLOAD_ENABLED) {
+		Locator::getLogger()->info(
+		  "Score upload is disabled in this build. Skipped score {}",
+		  hs->GetScoreKey());
+		if (callback)
+			callback();
+		return;
+	}
 
 	Locator::getLogger()->info("Creating UploadScore request for score {}",
 							   hs->GetScoreKey());
