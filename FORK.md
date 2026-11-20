@@ -13,6 +13,7 @@ below. It has no remote; upstream commits are fetched by URL when a new release 
 | Change | File | Effect |
 | :--- | :--- | :--- |
 | Copy an actor's definition node only on the legacy XML path | `src/Etterna/Actor/Base/ActorUtil.cpp` | Screen load time no longer grows with nesting depth. Measured on one Lua theme screen of 18,818 actors: 0.65 s instead of 1.69 s. |
+| Never send a score to the online service | `src/Etterna/Singletons/DownloadManager.cpp` | `UploadScore`, `UploadBulkScores` and `ShouldUploadScores` do nothing while `SCORE_UPLOAD_ENABLED` is false. An upload carries the SHA-256 of the running binary, which differs from the release binary's. Scores are still saved in the local profile; logging in, leaderboards and pack downloads work as in the release. |
 
 ## Build on Linux
 
@@ -42,9 +43,10 @@ Why each group of options is there:
   OpenGL renderer is unaffected.
 - The four curl options and the JACK switch keep the binary from linking system libraries the
   release binary does not use. LDAP in particular pulls a second OpenSSL version into the process.
-- `CMAKE_BUILD_WITH_INSTALL_RPATH` gives the binary the release run path (`$ORIGIN`,
-  `$ORIGIN/ffmpeg`), so it finds the Discord and ffmpeg libraries of the game folder it is copied
-  into and does not depend on this source tree.
+- `CMAKE_BUILD_WITH_INSTALL_RPATH` gives the binary the install run path set in
+  `CMake/Helpers/CPackSetup.cmake` (`$ORIGIN`, `$ORIGIN/../lib`, `$ORIGIN/ffmpeg`, plus the folder
+  OpenSSL is linked from, here `/usr/lib/openssl-3`), so it finds the Discord and ffmpeg libraries
+  of the game folder it is copied into and does not depend on this source tree.
 
 The binary is written to the repository root as `Etterna-RelWithDebInfo`. Copy it into an installed
 game folder under a name of its own, beside the release binary, and start it from there: the game
