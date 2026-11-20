@@ -1,19 +1,20 @@
-# Local fork notes
+# Fork notes
 
-This repository is a local fork of Etterna. `main` is an Etterna release plus the changes listed
-below. It has no remote; upstream commits are fetched by URL when a new release appears.
+This repository is a fork of Etterna. `master` is an Etterna release plus the changes listed
+below. The changes are not offered to the upstream project.
 
 ## Base
 
-- `main` is based on the upstream tag `v0.75.1`.
-- `upstream/master` and `upstream/develop` are reference copies of the upstream branches.
+- `master` is based on the upstream tag `v0.75.1`.
+- Upstream is `https://github.com/etternagame/etterna`; its `master` is the latest release and its
+  `develop` is unreleased work.
 
 ## Changes on top of the release
 
 | Change | File | Effect |
 | :--- | :--- | :--- |
 | Copy an actor's definition node only on the legacy XML path | `src/Etterna/Actor/Base/ActorUtil.cpp` | Screen load time no longer grows with nesting depth. Measured on one Lua theme screen of 18,818 actors: 0.65 s instead of 1.69 s. |
-| Never send a score to the online service | `src/Etterna/Singletons/DownloadManager.cpp` | `UploadScore`, `UploadBulkScores` and `ShouldUploadScores` do nothing while `SCORE_UPLOAD_ENABLED` is false. An upload carries the SHA-256 of the running binary, which differs from the release binary's. Scores are still saved in the local profile; logging in, leaderboards and pack downloads work as in the release. |
+| Never upload a score to the online service's score API | `src/Etterna/Singletons/DownloadManager.cpp` | While `SCORE_UPLOAD_ENABLED` is false, `ShouldUploadScores` returns false, and `UploadScore` and `UploadBulkScores` log the skip and return without sending a request. An upload carries the SHA-256 of the running binary, which differs from the release binary's. Scores are still saved in the local profile. Logging in, leaderboards, goals, favorites, playlists and pack downloads work as in the release, except that login no longer starts a score sync. A player logged in to a multiplayer server still reports each score to it. |
 
 ## Build on Linux
 
@@ -54,7 +55,7 @@ uses the folder of the executable as its data folder.
 
 ## Moving to a new release
 
-1. Fetch the release tag and the branches from upstream by URL, into `upstream/*`.
+1. Fetch the new release tag from upstream.
 2. Rebase the changes listed above onto the new tag and resolve conflicts.
 3. Build, then compare load times and a play session against the release binary before relying
    on the result.
