@@ -70,12 +70,14 @@ static Preference<std::string> searchURL("BaseOnlineAPISearchUrl",
 										 "https://search.etternaonline.com");
 static Preference<unsigned int> automaticSync("automaticScoreSync", 1);
 
-// This build never sends a score to the online service. An upload carries the
-// SHA-256 of the running binary (exe_hash in ScoreToJSON), which differs from
-// the release binary's, and the service publishes no rule for self-built
-// clients. Every upload path ends in UploadScore or UploadBulkScores, so
-// those two and ShouldUploadScores are the only places that test this.
-// Scores are still saved in the local profile.
+// This build never uploads a score to the online service's score API. An
+// upload carries the SHA-256 of the running binary (exe_hash in ScoreToJSON),
+// which differs from the release binary's, and the service publishes no rule
+// for self-built clients. Every API score upload ends in UploadScore or
+// UploadBulkScores, so those two and ShouldUploadScores are the only places
+// that test this. Scores are still saved in the local profile. A player
+// logged in to a multiplayer server still reports each score to that server
+// (ETTProtocol::ReportHighScore, called from StageStats).
 static constexpr bool SCORE_UPLOAD_ENABLED = false;
 
 //
