@@ -87,6 +87,10 @@ class BitmapText : public Actor
 	void CropToWidth(int width);
 
 	[[nodiscard]] auto EarlyAbortDraw() const -> bool override;
+	[[nodiscard]] auto IsSelfDormantWhenHidden() const -> bool override
+	{
+		return typeid(*this) == typeid(BitmapText) && BaseDormantWhenHidden();
+	}
 	void DrawPrimitives() override;
 
 	void SetUppercase(bool b);
