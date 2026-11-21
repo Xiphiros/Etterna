@@ -131,6 +131,8 @@ Actor::InitState()
 	m_ZTestMode = ZTEST_OFF;
 	m_bZWrite = false;
 	m_CullMode = CULL_NONE;
+	m_fHibernateSecsLeft = 0.0f;
+	MarkDormancyDirty();
 }
 
 static bool
@@ -166,6 +168,7 @@ Actor::Actor()
 
 Actor::~Actor()
 {
+	m_pParent = nullptr;
 	StopTweening();
 	UnsubscribeAll();
 	for (auto& w : m_WrapperStates) {
@@ -185,6 +188,11 @@ Actor::Actor(const Actor& cpy)
 Actor&
 Actor::operator=(const Actor& x)
 {
+	if (this == &x)
+		return *this;
+	if (m_pParent != nullptr)
+		m_pParent->MarkDormancyDirty();
+
 #define CPY(membername) this->membername = x.membername
 	CPY(m_pTempState);
 	CPY(m_sName);
@@ -254,7 +262,13 @@ Actor::operator=(const Actor& x)
 
 	CPY(m_mapNameToCommands);
 	CPY(m_tween_uses_effect_delta);
+	CPY(m_fHibernateSecsLeft);
 #undef CPY
+	m_bDormancyDirty = true;
+	m_bSubtreeDormant = false;
+	MarkDormancyDirty();
+	if (m_pParent != nullptr)
+		m_pParent->MarkDormancyDirty();
 	return *this;
 }
 
@@ -455,12 +469,14 @@ Actor::IsVisible()
 void
 Actor::Draw()
 {
-	if (!m_bVisible || this->EarlyAbortDraw()) {
+	if (!m_bVisible || m_fHibernateSecsLeft > 0.0f || this->EarlyAbortDraw()) {
 		return; // early abort
 	}
 
 	if (m_FakeParent != nullptr) {
-		if (!m_FakeParent->m_bVisible || m_FakeParent->EarlyAbortDraw()) {
+		if (!m_FakeParent->m_bVisible ||
+			m_FakeParent->m_fHibernateSecsLeft > 0.0f ||
+			m_FakeParent->EarlyAbortDraw()) {
 			return;
 		}
 		m_FakeParent->PreDraw();
@@ -491,7 +507,8 @@ Actor::Draw()
 	// -Kyz
 	for (auto i = m_WrapperStates.size(); i > 0 && dont_abort_draw; --i) {
 		auto* state = m_WrapperStates[i - 1];
-		if (!state->m_bVisible || state->EarlyAbortDraw()) {
+		if (!state->m_bVisible || state->m_fHibernateSecsLeft > 0.0f ||
+			state->EarlyAbortDraw()) {
 			dont_abort_draw = false;
 		} else {
 			state->PreDraw();
@@ -919,6 +936,8 @@ Actor::UpdateTweening(float fDeltaTime)
 			delete m_Tweens.front();
 			m_Tweens.erase(m_Tweens.begin());
 			EraseHeadTween();
+			if (m_Tweens.empty())
+				MarkDormancyDirty();
 		} else // in the middle of tweening. Recalcute the current position.
 		{
 			CalcPercentThroughTween();
@@ -949,6 +968,15 @@ Actor::Update(float fDeltaTime)
 		Locator::getLogger()->warn(
 		  "Actor was somehow considered null at an update. Update skipped");
 		return;
+	}
+
+	if (m_fHibernateSecsLeft > 0.0f) {
+		m_fHibernateSecsLeft -= fDeltaTime;
+		if (m_fHibernateSecsLeft > 0.0f) {
+			return;
+		}
+		m_fHibernateSecsLeft = 0.0f;
+		MarkDormancyDirty();
 	}
 
 	if (!m_WrapperStates.empty())
@@ -1046,6 +1074,7 @@ Actor::AddWrapperState()
 	auto* wrapper = new ActorFrame;
 	wrapper->InitState();
 	m_WrapperStates.push_back(wrapper);
+	MarkDormancyDirty();
 }
 
 void
@@ -1054,6 +1083,7 @@ Actor::RemoveWrapperState(size_t i)
 	ASSERT(i < m_WrapperStates.size());
 	SAFE_DELETE(m_WrapperStates[i]);
 	m_WrapperStates.erase(m_WrapperStates.begin() + i);
+	MarkDormancyDirty();
 }
 
 Actor*
@@ -1097,6 +1127,7 @@ Actor::BeginTweening(float time, ITween* pTween)
 	TI.m_pTween = pTween;
 	TI.m_fTweenTime = time;
 	TI.m_fTimeLeftInTween = time;
+	MarkDormancyDirty();
 }
 
 void
@@ -1114,6 +1145,7 @@ Actor::StopTweening()
 	for (auto& m_Tween : m_Tweens)
 		delete m_Tween;
 	m_Tweens.clear();
+	MarkDormancyDirty();
 }
 
 void
@@ -1279,6 +1311,7 @@ Actor::ResetEffectTimeIfDifferent(Effect new_effect)
 	if (m_Effect != new_effect) {
 		m_Effect = new_effect;
 		m_fSecsIntoEffect = 0;
+		MarkDormancyDirty();
 	}
 }
 
@@ -1388,6 +1421,7 @@ Actor::SetEffectBounce(float fPeriod, const RageVector3& vect)
 	SetEffectPeriod(fPeriod);
 	m_vEffectMagnitude = vect;
 	m_fSecsIntoEffect = 0;
+	MarkDormancyDirty();
 }
 
 void
@@ -1399,6 +1433,7 @@ Actor::SetEffectBob(float fPeriod, const RageVector3& vect)
 		m_Effect = bob;
 		SetEffectPeriod(fPeriod);
 		m_fSecsIntoEffect = 0;
+		MarkDormancyDirty();
 	}
 	m_vEffectMagnitude = vect;
 }
@@ -1409,6 +1444,7 @@ Actor::SetEffectSpin(const RageVector3& vect)
 	// todo: account for SSC_FUTURES -aj
 	m_Effect = spin;
 	m_vEffectMagnitude = vect;
+	MarkDormancyDirty();
 }
 
 void
@@ -1417,6 +1453,7 @@ Actor::SetEffectVibrate(const RageVector3& vect)
 	// todo: account for SSC_FUTURES -aj
 	m_Effect = vibrate;
 	m_vEffectMagnitude = vect;
+	MarkDormancyDirty();
 }
 
 void
@@ -1428,6 +1465,7 @@ Actor::SetEffectPulse(float fPeriod, float fMinZoom, float fMaxZoom)
 	SetEffectPeriod(fPeriod);
 	m_vEffectMagnitude[0] = fMinZoom;
 	m_vEffectMagnitude[1] = fMaxZoom;
+	MarkDormancyDirty();
 }
 
 void
@@ -1708,7 +1746,16 @@ Actor::PushContext(lua_State* L)
 void
 Actor::SetParent(Actor* pParent)
 {
+	if (m_pParent != nullptr)
+		m_pParent->MarkDormancyDirty();
+
 	m_pParent = pParent;
+	MarkDormancyDirty();
+	if (m_pParent != nullptr)
+		m_pParent->MarkDormancyDirty();
+
+	if (pParent == nullptr)
+		return;
 
 	auto* L = LUA->Get();
 	const auto iTop = lua_gettop(L);
@@ -1772,6 +1819,17 @@ class LunaActor : public Luna<Actor>
 			COMMON_RETURN_SELF;
 		}
 		p->Sleep(fTime);
+		COMMON_RETURN_SELF;
+	}
+	static int hibernate(T* p, lua_State* L)
+	{
+		const auto fTime = FArg(1);
+		if (fTime < 0) {
+			LuaHelpers::ReportScriptErrorFmt(
+			  "Lua: hibernate(%f): time must not be negative", fTime);
+			COMMON_RETURN_SELF;
+		}
+		p->Hibernate(fTime);
 		COMMON_RETURN_SELF;
 	}
 	static int linear(T* p, lua_State* L)
@@ -2953,6 +3011,7 @@ class LunaActor : public Luna<Actor>
 	{
 		ADD_METHOD(name);
 		ADD_METHOD(sleep);
+		ADD_METHOD(hibernate);
 		ADD_METHOD(linear);
 		ADD_METHOD(accelerate);
 		ADD_METHOD(decelerate);
