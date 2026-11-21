@@ -6,6 +6,8 @@
 /** @brief A container for other Actors. */
 class ActorFrame : public Actor
 {
+	friend class Actor;
+
   public:
 	ActorFrame();
 	ActorFrame(const ActorFrame& cpy);
@@ -172,6 +174,7 @@ class ActorFrame : public Actor
 
 	/** @brief The children Actors used by the ActorFrame. */
 	std::vector<Actor*> m_SubActors;
+	Actor* m_pFirstDormancyChild{ nullptr };
 	bool m_bPropagateCommands;
 	bool m_bDeleteChildren;
 	bool m_bDrawByZPosition;
