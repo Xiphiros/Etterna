@@ -503,6 +503,9 @@ Song::ReloadFromSongDir(const std::string& sDir)
 			}
 		}
 	}
+	if (SONGMAN != nullptr) {
+		SONGMAN->InvalidateGroupSort();
+	}
 	return true;
 }
 
@@ -1168,6 +1171,9 @@ Song::Save()
 	ReCalculateRadarValuesAndLastSecond();
 	TranslateTitles();
 	UpdateSortKeys();
+	if (SONGMAN != nullptr) {
+		SONGMAN->InvalidateGroupSort();
+	}
 
 	std::vector<std::string> backedDotOldFileNames;
 	std::vector<std::string> backedOrigFileNames;
