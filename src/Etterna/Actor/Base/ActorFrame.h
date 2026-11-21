@@ -60,7 +60,11 @@ class ActorFrame : public Actor
 	void SetUpdateFunction(const LuaReference& UpdateFunction)
 	{
 		m_UpdateFunction = UpdateFunction;
+		MarkDormancyDirty();
 	}
+
+	[[nodiscard]] auto IsSelfDormantWhenHidden() const -> bool override;
+	[[nodiscard]] auto IsSubtreeDormant() const -> bool override;
 
 	[[nodiscard]] auto GetDrawFunction() const -> LuaReference
 	{
