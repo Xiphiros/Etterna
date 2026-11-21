@@ -23,6 +23,7 @@
 #include "Etterna/Globals/rngthing.h"
 
 #include <algorithm>
+#include <unordered_set>
 
 #define NUM_WHEEL_ITEMS (static_cast<int>(ceil(NUM_WHEEL_ITEMS_TO_DRAW + 2)))
 #define WHEEL_TEXT(s)                                                          \
@@ -1020,17 +1021,19 @@ MusicWheel::BuildWheelItemDatas(
 				std::string sLastSection;
 				auto iSectionColorIndex = 0;
 
-				std::set<Song*> hurp;
+				std::unordered_set<const Song*> hurp;
+				hurp.reserve(arraySongs.size());
 				for (auto& a : arraySongs) {
 					hurp.emplace(a);
 				}
 
+				SONGMAN->EnsureGroupsSorted();
 				auto& groups = SONGMAN->groupderps;
+				auto& filteredByGroup = allSongsByGroupFiltered.at(so);
 
 				std::map<std::string, std::string> shitterstrats;
 				for (auto& n : groups) {
 					shitterstrats[make_lower(n.first)] = n.first;
-					SongUtil::SortSongPointerArrayByTitle(groups[n.first]);
 				}
 
 				for (auto& n : shitterstrats) {
@@ -1050,8 +1053,9 @@ MusicWheel::BuildWheelItemDatas(
 
 					// need to interact with the filter/search system so check
 					// if the song is in the arraysongs set defined above -mina
+					std::vector<Song*>* filteredGroupSongs = nullptr;
 					for (auto& s : gsongs) {
-						if (hurp.count(s) != 0u) {
+						if (hurp.find(s) != hurp.end()) {
 							arrayWheelItemDatas.emplace_back(
 							  std::make_unique<MusicWheelItemData>(
 								WheelItemDataType_Song,
@@ -1059,15 +1063,10 @@ MusicWheel::BuildWheelItemDatas(
 								gname,
 								SONGMAN->GetSongColor(s),
 								0));
-							if (allSongsByGroupFiltered.at(so).count(gname) !=
-								0u) {
-								allSongsByGroupFiltered.at(so)[gname]
-								  .emplace_back(s);
-							} else {
-								std::vector<Song*> v;
-								v.emplace_back(s);
-								allSongsByGroupFiltered.at(so)[gname] = v;
+							if (filteredGroupSongs == nullptr) {
+								filteredGroupSongs = &filteredByGroup[gname];
 							}
+							filteredGroupSongs->emplace_back(s);
 						}
 					}
 				}
