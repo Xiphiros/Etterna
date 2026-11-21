@@ -72,8 +72,8 @@ static Preference<unsigned int> automaticSync("automaticScoreSync", 1);
 
 // This build never uploads a score to the online service's score API. An
 // upload carries the SHA-256 of the running binary (exe_hash in ScoreToJSON),
-// which differs from the release binary's, and the service publishes no rule
-// for self-built clients. Every API score upload ends in UploadScore or
+// which differs from the release binary's, so the service would receive scores
+// from a binary it did not ship. Every API score upload ends in UploadScore or
 // UploadBulkScores, so those two and ShouldUploadScores gate uploads on this
 // flag while IsScoreUploadEnabled exposes it to Lua. Scores are still saved
 // in the local profile.
@@ -232,8 +232,8 @@ initBasicCURLHandle()
 	curl_easy_setopt_log_err(
 	  curlHandle, CURLOPT_USERAGENT, useragent().c_str());
 	curl_easy_setopt_log_err(curlHandle, CURLOPT_ACCEPT_ENCODING, "");
-	curl_easy_setopt_log_err(curlHandle, CURLOPT_SSL_VERIFYPEER, 0L);
-	curl_easy_setopt_log_err(curlHandle, CURLOPT_SSL_VERIFYHOST, 0L);
+	curl_easy_setopt_log_err(curlHandle, CURLOPT_SSL_VERIFYPEER, 1L);
+	curl_easy_setopt_log_err(curlHandle, CURLOPT_SSL_VERIFYHOST, 2L);
 	curl_easy_setopt_log_err(curlHandle, CURLOPT_FOLLOWLOCATION, 1L);
 	return curlHandle;
 }
@@ -243,7 +243,7 @@ initCURLHandle(bool withBearer, bool acceptJson, bool compressed)
 {
 	CURL* curlHandle = initBasicCURLHandle();
 	struct curl_slist* list = nullptr;
-	if (withBearer)
+	if (withBearer && DLMAN != nullptr && !DLMAN->authToken.empty())
 		list = curl_slist_append(
 		  list, ("Authorization: Bearer " + DLMAN->authToken).c_str());
 	if (acceptJson) {
