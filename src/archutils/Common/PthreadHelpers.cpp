@@ -161,7 +161,6 @@ GetCurrentThreadIdInternal()
 uint64_t
 GetCurrentThreadId()
 {
-#if defined(HAVE_TLS)
 	/* This is called each time we lock a mutex, and gettid() is a little slow,
 	 * so cache the result if we support TLS. */
 	if (RageThread::GetSupportsTLS()) {
@@ -173,7 +172,6 @@ GetCurrentThreadId()
 		}
 		return cached_tid;
 	}
-#endif
 
 	return GetCurrentThreadIdInternal();
 }
