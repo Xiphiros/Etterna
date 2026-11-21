@@ -402,6 +402,8 @@ Song::FinalizeLoading()
 	  sDirectoryParts[sDirectoryParts.size() - 3]; // second from last item
 	ASSERT(!m_sGroupName.empty());
 
+	UpdateSortKeys();
+
 	for (auto& s : m_vpSteps) {
 		/* Compress all Steps. During initial caching, this will remove
 		 * cached NoteData; during cached loads, this will just remove
@@ -1049,6 +1051,7 @@ Song::TidyUpData(bool from_cache, bool /* duringCache */, Calc* calc)
 	if (!loot.empty())
 		doot += " " + loot;
 	translitfulltitle = doot;
+	UpdateSortKeys();
 	/* Generate these before we autogen notes, so the new notes can inherit
 	 * their source's values. */
 	ReCalculateRadarValuesAndLastSecond(from_cache, true, calc);
@@ -1079,6 +1082,22 @@ Song::TranslateTitles()
 						m_sMainTitleTranslit,
 						m_sSubTitleTranslit,
 						m_sArtistTranslit);
+}
+
+void
+Song::UpdateSortKeys()
+{
+	m_sSortMainTitle = GetTranslitMainTitle();
+	SongUtil::MakeSortString(m_sSortMainTitle);
+
+	m_sSortSubTitle = GetTranslitSubTitle();
+	SongUtil::MakeSortString(m_sSortSubTitle);
+
+	m_sSortArtist = GetTranslitArtist();
+	SongUtil::MakeSortString(m_sSortArtist);
+
+	m_sSortAuthor = GetOrTryAtLeastToGetSimfileAuthor();
+	SongUtil::MakeSortString(m_sSortAuthor);
 }
 
 void
@@ -1148,6 +1167,7 @@ Song::Save()
 
 	ReCalculateRadarValuesAndLastSecond();
 	TranslateTitles();
+	UpdateSortKeys();
 
 	std::vector<std::string> backedDotOldFileNames;
 	std::vector<std::string> backedOrigFileNames;
