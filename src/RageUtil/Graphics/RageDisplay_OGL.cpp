@@ -2777,6 +2777,13 @@ RenderTarget_FramebufferObject::Create(const RenderTargetParam& param,
 			FlushGLErrors();
 		}
 		glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, m_iFrameBufferHandle);
+		if (bMSAASucceeded) {
+			// Clear the resolve texture so non-power-of-two padding texels
+			// outside (0, 0, m_iWidth, m_iHeight) sample transparent black
+			// under GL_LINEAR instead of uninitialized VRAM.
+			glClearColor(0, 0, 0, 0);
+			glClear(GL_COLOR_BUFFER_BIT);
+		}
 	}
 
 	/* Attach a depth buffer, if requested. */
@@ -2844,9 +2851,9 @@ void
 RenderTarget_FramebufferObject::FinishRenderingTo()
 {
 	if (m_iMSAAFrameBufferHandle != 0) {
-		glBindFramebufferEXT(GL_READ_FRAMEBUFFER_EXT, m_iMSAAFrameBufferHandle);
-		glBindFramebufferEXT(GL_DRAW_FRAMEBUFFER_EXT, m_iFrameBufferHandle);
 		if (GLEW_ARB_framebuffer_object) {
+			glBindFramebuffer(GL_READ_FRAMEBUFFER, m_iMSAAFrameBufferHandle);
+			glBindFramebuffer(GL_DRAW_FRAMEBUFFER, m_iFrameBufferHandle);
 			glBlitFramebuffer(0,
 							  0,
 							  m_iWidth,
@@ -2857,18 +2864,21 @@ RenderTarget_FramebufferObject::FinishRenderingTo()
 							  m_iHeight,
 							  GL_COLOR_BUFFER_BIT,
 							  GL_NEAREST);
-		} else {
-			glBlitFramebufferEXT(0,
-								 0,
-								 m_iWidth,
-								 m_iHeight,
-								 0,
-								 0,
-								 m_iWidth,
-								 m_iHeight,
-								 GL_COLOR_BUFFER_BIT,
-								 GL_NEAREST);
+			glBindFramebuffer(GL_FRAMEBUFFER, 0);
+			return;
 		}
+		glBindFramebufferEXT(GL_READ_FRAMEBUFFER_EXT, m_iMSAAFrameBufferHandle);
+		glBindFramebufferEXT(GL_DRAW_FRAMEBUFFER_EXT, m_iFrameBufferHandle);
+		glBlitFramebufferEXT(0,
+							 0,
+							 m_iWidth,
+							 m_iHeight,
+							 0,
+							 0,
+							 m_iWidth,
+							 m_iHeight,
+							 GL_COLOR_BUFFER_BIT,
+							 GL_NEAREST);
 	}
 	glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, 0);
 }
