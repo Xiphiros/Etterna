@@ -2610,20 +2610,43 @@ class RenderTarget_FramebufferObject : public RenderTarget
 	bool InvertY() const override { return true; }
 
   private:
-	unsigned int m_iFrameBufferHandle;
-	unsigned int m_iTexHandle;
-	unsigned int m_iDepthBufferHandle;
+	void DestroyMSAA();
+
+	unsigned int m_iFrameBufferHandle{ 0 };
+	unsigned int m_iTexHandle{ 0 };
+	unsigned int m_iDepthBufferHandle{ 0 };
+	unsigned int m_iMSAAFrameBufferHandle{ 0 };
+	unsigned int m_iMSAAColorBufferHandle{ 0 };
+	unsigned int m_iMSAADepthBufferHandle{ 0 };
+	int m_iWidth{ 0 };
+	int m_iHeight{ 0 };
 };
 
-RenderTarget_FramebufferObject::RenderTarget_FramebufferObject()
+RenderTarget_FramebufferObject::RenderTarget_FramebufferObject() = default;
+
+void
+RenderTarget_FramebufferObject::DestroyMSAA()
 {
-	m_iFrameBufferHandle = 0;
-	m_iTexHandle = 0;
-	m_iDepthBufferHandle = 0;
+	if (m_iMSAADepthBufferHandle) {
+		glDeleteRenderbuffersEXT(
+		  1, reinterpret_cast<GLuint*>(&m_iMSAADepthBufferHandle));
+		m_iMSAADepthBufferHandle = 0;
+	}
+	if (m_iMSAAColorBufferHandle) {
+		glDeleteRenderbuffersEXT(
+		  1, reinterpret_cast<GLuint*>(&m_iMSAAColorBufferHandle));
+		m_iMSAAColorBufferHandle = 0;
+	}
+	if (m_iMSAAFrameBufferHandle) {
+		glDeleteFramebuffersEXT(
+		  1, reinterpret_cast<GLuint*>(&m_iMSAAFrameBufferHandle));
+		m_iMSAAFrameBufferHandle = 0;
+	}
 }
 
 RenderTarget_FramebufferObject::~RenderTarget_FramebufferObject()
 {
+	DestroyMSAA();
 	if (m_iDepthBufferHandle)
 		glDeleteRenderbuffersEXT(
 		  1, reinterpret_cast<GLuint*>(&m_iDepthBufferHandle));
@@ -2640,6 +2663,8 @@ RenderTarget_FramebufferObject::Create(const RenderTargetParam& param,
 									   int& iTextureHeightOut)
 {
 	m_Param = param;
+	m_iWidth = param.iWidth;
+	m_iHeight = param.iHeight;
 
 	DebugFlushGLErrors();
 
@@ -2690,8 +2715,72 @@ RenderTarget_FramebufferObject::Create(const RenderTargetParam& param,
 							  0);
 	DebugAssertNoGLError();
 
+	bool bMSAASucceeded = false;
+	if (param.bWithMSAA &&
+		(GLEW_ARB_framebuffer_object ||
+		 (GLEW_EXT_framebuffer_multisample && GLEW_EXT_framebuffer_blit))) {
+		FlushGLErrors();
+		GLint maxSamples = 0;
+		glGetIntegerv(GL_MAX_SAMPLES, &maxSamples);
+		const GLint samples = std::min<GLint>(4, maxSamples);
+		auto fnMultisample = GLEW_ARB_framebuffer_object
+							   ? glRenderbufferStorageMultisample
+							   : glRenderbufferStorageMultisampleEXT;
+		if (glGetError() == GL_NO_ERROR && samples >= 2 &&
+			fnMultisample != nullptr) {
+			glGenFramebuffersEXT(
+			  1, reinterpret_cast<GLuint*>(&m_iMSAAFrameBufferHandle));
+			glGenRenderbuffersEXT(
+			  1, reinterpret_cast<GLuint*>(&m_iMSAAColorBufferHandle));
+			if (m_iMSAAFrameBufferHandle != 0 &&
+				m_iMSAAColorBufferHandle != 0) {
+				glBindFramebufferEXT(GL_FRAMEBUFFER_EXT,
+									 m_iMSAAFrameBufferHandle);
+				glBindRenderbufferEXT(GL_RENDERBUFFER_EXT,
+									  m_iMSAAColorBufferHandle);
+				fnMultisample(GL_RENDERBUFFER_EXT,
+							  samples,
+							  internalformat,
+							  iTextureWidth,
+							  iTextureHeight);
+				glFramebufferRenderbufferEXT(GL_FRAMEBUFFER_EXT,
+											 GL_COLOR_ATTACHMENT0_EXT,
+											 GL_RENDERBUFFER_EXT,
+											 m_iMSAAColorBufferHandle);
+				if (param.bWithDepthBuffer) {
+					glGenRenderbuffersEXT(
+					  1, reinterpret_cast<GLuint*>(&m_iMSAADepthBufferHandle));
+					glBindRenderbufferEXT(GL_RENDERBUFFER_EXT,
+										  m_iMSAADepthBufferHandle);
+					fnMultisample(GL_RENDERBUFFER_EXT,
+								  samples,
+								  GL_DEPTH_COMPONENT16,
+								  iTextureWidth,
+								  iTextureHeight);
+					glFramebufferRenderbufferEXT(GL_FRAMEBUFFER_EXT,
+												 GL_DEPTH_ATTACHMENT_EXT,
+												 GL_RENDERBUFFER_EXT,
+												 m_iMSAADepthBufferHandle);
+				}
+				const auto msaaStatus =
+				  glCheckFramebufferStatusEXT(GL_FRAMEBUFFER_EXT);
+				if (msaaStatus == GL_FRAMEBUFFER_COMPLETE_EXT &&
+					glGetError() == GL_NO_ERROR) {
+					bMSAASucceeded = true;
+				}
+			}
+			if (!bMSAASucceeded) {
+				DestroyMSAA();
+				FlushGLErrors();
+			}
+		} else {
+			FlushGLErrors();
+		}
+		glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, m_iFrameBufferHandle);
+	}
+
 	/* Attach a depth buffer, if requested. */
-	if (param.bWithDepthBuffer) {
+	if (!bMSAASucceeded && param.bWithDepthBuffer) {
 		glGenRenderbuffersEXT(1,
 							  reinterpret_cast<GLuint*>(&m_iDepthBufferHandle));
 		ASSERT(m_iDepthBufferHandle != 0);
@@ -2736,18 +2825,51 @@ RenderTarget_FramebufferObject::Create(const RenderTargetParam& param,
 			FAIL_M(ssprintf("Unexpected GL framebuffer status: %i", status));
 	}
 
-	glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, 0);
+	glBindRenderbufferEXT(GL_RENDERBUFFER_EXT, 0);
+	if (g_pCurrentRenderTarget != nullptr)
+		g_pCurrentRenderTarget->StartRenderingTo();
+	else
+		glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, 0);
 }
 
 void
 RenderTarget_FramebufferObject::StartRenderingTo()
 {
-	glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, m_iFrameBufferHandle);
+	glBindFramebufferEXT(GL_FRAMEBUFFER_EXT,
+						 m_iMSAAFrameBufferHandle ? m_iMSAAFrameBufferHandle
+												  : m_iFrameBufferHandle);
 }
 
 void
 RenderTarget_FramebufferObject::FinishRenderingTo()
 {
+	if (m_iMSAAFrameBufferHandle != 0) {
+		glBindFramebufferEXT(GL_READ_FRAMEBUFFER_EXT, m_iMSAAFrameBufferHandle);
+		glBindFramebufferEXT(GL_DRAW_FRAMEBUFFER_EXT, m_iFrameBufferHandle);
+		if (GLEW_ARB_framebuffer_object) {
+			glBlitFramebuffer(0,
+							  0,
+							  m_iWidth,
+							  m_iHeight,
+							  0,
+							  0,
+							  m_iWidth,
+							  m_iHeight,
+							  GL_COLOR_BUFFER_BIT,
+							  GL_NEAREST);
+		} else {
+			glBlitFramebufferEXT(0,
+								 0,
+								 m_iWidth,
+								 m_iHeight,
+								 0,
+								 0,
+								 m_iWidth,
+								 m_iHeight,
+								 GL_COLOR_BUFFER_BIT,
+								 GL_NEAREST);
+		}
+	}
 	glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, 0);
 }
 
