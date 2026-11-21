@@ -752,7 +752,7 @@ namespace {
 XNode*
 XNodeFromTableRecursive(lua_State* L,
 						const std::string& sName,
-						LuaReference& ProcessedTables)
+						int iProcessedIdx)
 {
 	auto* pNode = new XNode(sName);
 
@@ -774,7 +774,7 @@ XNodeFromTableRecursive(lua_State* L,
 	{
 		if (!lua_istable(L, -1))
 			continue;
-		NodeNamesToAdd.push_back(ssprintf("%i", i));
+		NodeNamesToAdd.push_back(std::to_string(i));
 		NodesToAdd.push_back(LuaReference());
 		NodesToAdd.back().SetFromStack(L);
 	}
@@ -818,34 +818,28 @@ XNodeFromTableRecursive(lua_State* L,
 		LuaReference& NodeToAdd = NodesToAdd[i];
 
 		// Check if the table is on the stack.
-		ProcessedTables.PushSelf(L);
 		NodeToAdd.PushSelf(L); // push table
-		lua_gettable(L, -2);
+		lua_rawget(L, iProcessedIdx);
 
 		bool bSawThisTableAlready = !lua_isnil(L, -1);
-		lua_pop(L, 2); // pop lua_gettable result, ProcessedTables
+		lua_pop(L, 1); // pop lua_rawget result
 		if (bSawThisTableAlready)
 			continue;
 
 		// Add the table to the stack.
-		ProcessedTables.PushSelf(L);
 		NodeToAdd.PushSelf(L);
 		lua_pushboolean(L, true);
-		lua_settable(L, -3);
-		lua_pop(L, 1); // pop ProcessedTables
+		lua_rawset(L, iProcessedIdx);
 
 		NodeToAdd.PushSelf(L);
-		XNode* pNewNode =
-		  XNodeFromTableRecursive(L, sNodeName, ProcessedTables);
+		XNode* pNewNode = XNodeFromTableRecursive(L, sNodeName, iProcessedIdx);
 		if (pNewNode)
 			pNode->AppendChild(pNewNode);
 
 		// Remove the table from the stack.
-		ProcessedTables.PushSelf(L);
 		NodeToAdd.PushSelf(L);
 		lua_pushnil(L);
-		lua_settable(L, -3);
-		lua_pop(L, 1); // pop ProcessedTables
+		lua_rawset(L, iProcessedIdx);
 	}
 
 	return pNode;
@@ -866,11 +860,13 @@ XmlFileUtil::XNodeFromTable(lua_State* L)
 	/* Maintain a set of references that we've created. Tables may loop; XNode
 	 * trees may not. If we encounter a cycle, skip creating an XNode for
 	 * that node. */
-	LuaReference ProcessedTables;
 	lua_newtable(L);
-	ProcessedTables.SetFromStack(L);
+	lua_insert(L, -2);
+	int iProcessedIdx = lua_gettop(L) - 1;
 
-	return XNodeFromTableRecursive(L, "Layer", ProcessedTables);
+	XNode* pRet = XNodeFromTableRecursive(L, "Layer", iProcessedIdx);
+	lua_pop(L, 1);
+	return pRet;
 }
 
 /* Move nodes from pFrom into pTo which don't already exist in pTo. For
