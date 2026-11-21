@@ -24,6 +24,7 @@ struct Playlist;
 
 // Current file versions
 extern const std::string ETT_XML;
+extern const std::string ETT_XML_GZ;
 
 /**
  * @brief The filename where one can edit their personal profile data.
