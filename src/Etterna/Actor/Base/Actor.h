@@ -8,7 +8,9 @@
 #include "RageUtil/Graphics/Display/PipelineHandle.h"
 #include "Tween.h"
 
+#include <algorithm>
 #include <map>
+#include <typeinfo>
 
 class XNode;
 struct lua_State;
@@ -641,9 +643,39 @@ class Actor : public MessageSubscriber
 	void StopEffects();
 	Effect GetEffect(int i) const { return m_Effects[i]; }
 #else
-	void StopEffect() { m_Effect = no_effect; }
+	void StopEffect()
+	{
+		m_Effect = no_effect;
+		MarkDormancyDirty();
+	}
 	[[nodiscard]] auto GetEffect() const -> Effect { return m_Effect; }
 #endif
+	void MarkDormancyDirty()
+	{
+		for (Actor* p = this; p != nullptr; p = p->m_pParent) {
+			if (p->m_bDormancyDirty)
+				break;
+			p->m_bDormancyDirty = true;
+		}
+	}
+	[[nodiscard]] auto BaseDormantWhenHidden() const -> bool
+	{
+		return m_fHibernateSecsLeft <= 0.0f && m_Tweens.empty() &&
+			   m_WrapperStates.empty() && m_Effect == no_effect;
+	}
+	[[nodiscard]] virtual auto IsSelfDormantWhenHidden() const -> bool
+	{
+		return typeid(*this) == typeid(Actor) && BaseDormantWhenHidden();
+	}
+	[[nodiscard]] virtual auto IsSubtreeDormant() const -> bool
+	{
+		if (m_bDormancyDirty) {
+			m_bSubtreeDormant = IsSelfDormantWhenHidden();
+			m_bDormancyDirty = false;
+		}
+		return m_bSubtreeDormant;
+	}
+	void ClearParentOnDestroy() { m_pParent = nullptr; }
 	[[nodiscard]] auto GetSecsIntoEffect() const -> float
 	{
 		return m_fSecsIntoEffect;
@@ -725,7 +757,15 @@ class Actor : public MessageSubscriber
 	void SetShadowLengthX(float fLengthX) { m_fShadowLengthX = fLengthX; }
 	void SetShadowLengthY(float fLengthY) { m_fShadowLengthY = fLengthY; }
 	void SetShadowColor(const RageColor& c) { m_ShadowColor = c; }
-	// TODO(Sam): Implement hibernate as a tween type?
+	void Hibernate(float fSecs)
+	{
+		m_fHibernateSecsLeft = std::max(0.0f, fSecs);
+		MarkDormancyDirty();
+	}
+	[[nodiscard]] auto GetHibernateSecsLeft() const -> float
+	{
+		return m_fHibernateSecsLeft;
+	}
 	void SetDrawOrder(int iOrder) { m_iDrawOrder = iOrder; }
 	[[nodiscard]] auto GetDrawOrder() const -> int { return m_iDrawOrder; }
 
@@ -822,14 +862,17 @@ class Actor : public MessageSubscriber
 	/** @brief the name of the Actor. */
 	std::string m_sName;
 	/** @brief the current parent of this Actor if it exists. */
-	Actor* m_pParent;
+	Actor* m_pParent{ nullptr };
 	// m_FakeParent exists to provide a way to render the actor inside another's
 	// state without making that actor the parent.  It's like having multiple
 	// parents. -Kyz
-	Actor* m_FakeParent;
+	Actor* m_FakeParent{ nullptr };
 	// WrapperStates provides a way to wrap the actor inside ActorFrames,
 	// applicable to any actor, not just ones the theme creates.
 	std::vector<Actor*> m_WrapperStates;
+	float m_fHibernateSecsLeft{ 0.0f };
+	mutable bool m_bDormancyDirty{ true };
+	mutable bool m_bSubtreeDormant{ false };
 
 	/** @brief Some general information about the Tween. */
 	struct TweenInfo
