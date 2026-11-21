@@ -31,20 +31,55 @@ XMLProfile::LoadEttFromDir(string dir)
 {
 	profiledir = dir + PROFILEMAN->GetStatsPrefix();
 	loadingProfile->IsEtternaProfile = true;
-	const auto fn = profiledir.append(ETT_XML);
+	const auto fn = profiledir + ETT_XML;
+	const auto fngz = profiledir + ETT_XML_GZ;
 
-	int iError;
-	const std::unique_ptr<RageFileBasic> pFile(
-	  FILEMAN->Open(fn, RageFile::READ, iError));
-	if (pFile.get() == nullptr) {
-		Locator::getLogger()->warn("Error opening {}: {}", fn.c_str(), strerror(iError));
-		return ProfileLoadResult_FailedTampered;
+	int iError = 0;
+	uint32_t iCRC32 = 0;
+	bool bCompressed = false;
+	std::unique_ptr<RageFileBasic> pFile;
+	string loadPath = fn;
+
+	if (FILEMAN->IsAFile(fn)) {
+		pFile.reset(FILEMAN->Open(fn, RageFile::READ, iError));
+		if (pFile == nullptr) {
+			Locator::getLogger()->warn(
+			  "Error opening {}: {}", fn.c_str(), strerror(iError));
+			return ProfileLoadResult_FailedTampered;
+		}
+	} else if (FILEMAN->IsAFile(fngz)) {
+		loadPath = fngz;
+		std::unique_ptr<RageFileBasic> pRawFile(
+		  FILEMAN->Open(fngz, RageFile::READ, iError));
+		if (pRawFile == nullptr) {
+			Locator::getLogger()->warn(
+			  "Error opening {}: {}", fngz.c_str(), strerror(iError));
+			return ProfileLoadResult_FailedTampered;
+		}
+		string sError;
+		pFile.reset(GunzipFile(pRawFile.release(), sError, &iCRC32));
+		if (pFile == nullptr) {
+			Locator::getLogger()->warn(
+			  "Error decompressing {}: {}", fngz.c_str(), sError.c_str());
+			return ProfileLoadResult_FailedTampered;
+		}
+		bCompressed = true;
+	} else {
+		return ProfileLoadResult_FailedNoProfile;
 	}
 
-	Locator::getLogger()->info("Loading {}", fn.c_str());
+	Locator::getLogger()->info("Loading {}", loadPath.c_str());
 	XNode xml;
-	if (!XmlFileUtil::LoadFromFileShowErrors(xml, *pFile.get()))
+	if (!XmlFileUtil::LoadFromFileShowErrors(xml, *pFile))
 		return ProfileLoadResult_FailedTampered;
+	if (bCompressed) {
+		uint32_t iActualCRC32 = 0;
+		if (!pFile->GetCRC32(&iActualCRC32) || iActualCRC32 != iCRC32) {
+			Locator::getLogger()->warn("CRC error loading {}",
+									   loadPath.c_str());
+			return ProfileLoadResult_FailedTampered;
+		}
+	}
 	Locator::getLogger()->info("Done loading from file");
 
 	return LoadEttXmlFromNode(&xml);
@@ -55,43 +90,40 @@ XMLProfile::SaveEttXmlToDir(string sDir, const Profile* profile) const
 {
 	Locator::getLogger()->info("Saving Etterna Profile to: {}", sDir.c_str());
 	const std::unique_ptr<XNode> xml(SaveEttXmlCreateNode(profile));
-	auto pDir = sDir + PROFILEMAN->GetStatsPrefix();
-	// Save Etterna.xml
-	const auto fn = pDir.append(ETT_XML);
-	const auto fngz = pDir.append(ETT_XML_GZ);
+	const auto pDir = sDir + PROFILEMAN->GetStatsPrefix();
+	const auto fn = pDir + ETT_XML;
+	const auto fngz = pDir + ETT_XML_GZ;
+	const bool bCompress = g_bProfileDataCompress;
+	const auto& target = bCompress ? fngz : fn;
+	const auto& stale = bCompress ? fn : fngz;
 	{
-		string sError;
 		RageFile f;
-		if (!f.Open(fn, RageFile::WRITE)) {
+		if (!f.Open(target, RageFile::WRITE)) {
 			LuaHelpers::ReportScriptErrorFmt("Couldn't open %s for writing: %s",
-											 fn.c_str(),
+											 target.c_str(),
 											 f.GetError().c_str());
 			return false;
 		}
 
-		if (g_bProfileDataCompress) {
+		if (bCompress) {
 			RageFileObjGzip gzip(&f);
-			gzip.Start();
+			if (gzip.Start() == -1)
+				return false;
 			if (!XmlFileUtil::SaveToFile(xml.get(), gzip, "", false))
 				return false;
-
 			if (gzip.Finish() == -1)
 				return false;
-
-			/* After successfully saving ETT_XML_GZ, remove any stray
-			 * ETT_XML. */
-			if (FILEMAN->IsAFile(fn))
-				FILEMAN->Remove(fn);
 		} else {
 			if (!XmlFileUtil::SaveToFile(xml.get(), f, "", false))
 				return false;
-
-			/* After successfully saving ETT_XML, remove any stray
-			 * ETT_XML_GZ. */
-			if (FILEMAN->IsAFile(fngz))
-				FILEMAN->Remove(fngz);
 		}
+
+		f.Close();
 	}
+
+	if (FILEMAN->IsAFile(stale))
+		FILEMAN->Remove(stale);
+
 	return true;
 }
 
@@ -326,10 +358,10 @@ XMLProfile::SaveEttGeneralDataCreateNode(const Profile* profile) const
 void
 XMLProfile::MoveBackupToDir(string sFromDir, string sToDir)
 {
-	auto frompath = sFromDir.append(ETT_XML);
-	const auto fromsig = frompath.append(SIGNATURE_APPEND);
-	auto topath = sToDir.append(ETT_XML);
-	const auto tosig = topath.append(SIGNATURE_APPEND);
+	const auto frompath = sFromDir + ETT_XML;
+	const auto fromsig = frompath + SIGNATURE_APPEND;
+	const auto topath = sToDir + ETT_XML;
+	const auto tosig = topath + SIGNATURE_APPEND;
 	if (FILEMAN->IsAFile(frompath) && FILEMAN->IsAFile(fromsig)) {
 		FILEMAN->Move(frompath, topath);
 		FILEMAN->Move(fromsig, tosig);
