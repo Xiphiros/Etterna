@@ -168,7 +168,7 @@ Actor::Actor()
 
 Actor::~Actor()
 {
-	m_pParent = nullptr;
+	DetachDormancyParent();
 	StopTweening();
 	UnsubscribeAll();
 	for (auto& w : m_WrapperStates) {
@@ -190,8 +190,6 @@ Actor::operator=(const Actor& x)
 {
 	if (this == &x)
 		return *this;
-	if (m_pParent != nullptr)
-		m_pParent->MarkDormancyDirty();
 
 #define CPY(membername) this->membername = x.membername
 	CPY(m_pTempState);
@@ -264,11 +262,9 @@ Actor::operator=(const Actor& x)
 	CPY(m_tween_uses_effect_delta);
 	CPY(m_fHibernateSecsLeft);
 #undef CPY
-	m_bDormancyDirty = true;
+	m_bDormancyDirty = false;
 	m_bSubtreeDormant = false;
 	MarkDormancyDirty();
-	if (m_pParent != nullptr)
-		m_pParent->MarkDormancyDirty();
 	return *this;
 }
 
@@ -975,6 +971,7 @@ Actor::Update(float fDeltaTime)
 		if (m_fHibernateSecsLeft > 0.0f) {
 			return;
 		}
+		fDeltaTime = std::max(0.0f, -m_fHibernateSecsLeft);
 		m_fHibernateSecsLeft = 0.0f;
 		MarkDormancyDirty();
 	}
@@ -1746,16 +1743,7 @@ Actor::PushContext(lua_State* L)
 void
 Actor::SetParent(Actor* pParent)
 {
-	if (m_pParent != nullptr)
-		m_pParent->MarkDormancyDirty();
-
 	m_pParent = pParent;
-	MarkDormancyDirty();
-	if (m_pParent != nullptr)
-		m_pParent->MarkDormancyDirty();
-
-	if (pParent == nullptr)
-		return;
 
 	auto* L = LUA->Get();
 	const auto iTop = lua_gettop(L);
@@ -1767,6 +1755,60 @@ Actor::SetParent(Actor* pParent)
 
 	lua_settop(L, iTop);
 	LUA->Release(L);
+}
+
+void
+Actor::MarkDormancyDirty()
+{
+	for (Actor* p = this; p != nullptr; p = p->m_pDormancyParent) {
+		if (p->m_bDormancyDirty)
+			break;
+		p->m_bDormancyDirty = true;
+	}
+}
+
+void
+Actor::AttachDormancyParent(ActorFrame* pParent)
+{
+	if (pParent == nullptr) {
+		DetachDormancyParent();
+		return;
+	}
+	if (m_pDormancyParent == pParent) {
+		MarkDormancyDirty();
+		pParent->MarkDormancyDirty();
+		return;
+	}
+	DetachDormancyParent();
+	m_pDormancyParent = pParent;
+	m_pPrevDormancySibling = nullptr;
+	m_pNextDormancySibling = pParent->m_pFirstDormancyChild;
+	if (pParent->m_pFirstDormancyChild != nullptr)
+		pParent->m_pFirstDormancyChild->m_pPrevDormancySibling = this;
+	pParent->m_pFirstDormancyChild = this;
+	MarkDormancyDirty();
+	pParent->MarkDormancyDirty();
+}
+
+void
+Actor::DetachDormancyParent()
+{
+	auto* pOldParent = m_pDormancyParent;
+	if (pOldParent == nullptr)
+		return;
+
+	if (m_pPrevDormancySibling != nullptr)
+		m_pPrevDormancySibling->m_pNextDormancySibling = m_pNextDormancySibling;
+	else
+		pOldParent->m_pFirstDormancyChild = m_pNextDormancySibling;
+
+	if (m_pNextDormancySibling != nullptr)
+		m_pNextDormancySibling->m_pPrevDormancySibling = m_pPrevDormancySibling;
+
+	m_pDormancyParent = nullptr;
+	m_pPrevDormancySibling = nullptr;
+	m_pNextDormancySibling = nullptr;
+	pOldParent->MarkDormancyDirty();
 }
 
 Actor::TweenInfo::TweenInfo()
