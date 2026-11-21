@@ -1085,9 +1085,8 @@ sm_main(int argc, char* argv[])
 			  "%s", COULDNT_OPEN_LOADING_WINDOW.GetValue().c_str());
 	}
 
-#if defined(HAVE_TLS)
-	Locator::getLogger()->info("TLS is {}available", RageThread::GetSupportsTLS() ? "" : "not ");
-#endif
+	Locator::getLogger()->info("TLS is {}available",
+							   RageThread::GetSupportsTLS() ? "" : "not ");
 
 	AdjustForChangedSystemCapabilities();
 
