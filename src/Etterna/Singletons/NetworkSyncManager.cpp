@@ -28,6 +28,10 @@ NetworkSyncManager* NSMAN;
 extern Preference<std::string> g_sLastServer;
 Preference<unsigned int> autoConnectMultiplayer("AutoConnectMultiplayer", 1);
 
+// EtternaOnline multiplayer WebSocket connections and login are disabled in
+// this build so the client never opens a session or sends pack lists at start.
+// Themes test NSMAN:IsMultiplayerEnabled() to hide multiplayer entry points.
+static constexpr bool MULTIPLAYER_ENABLED = false;
 
 static LocalizedString CONNECTION_SUCCESSFUL("NetworkSyncManager",
 											 "Connection to '%s' successful.");
@@ -42,7 +46,7 @@ NetworkSyncManager::NetworkSyncManager(LoadingWindow* ld)
 	loggedIn = false;
 	m_startupStatus = NSMANStartupStatus::INIT;
 	m_ActivePlayers = 0;
-	if (ld) {
+	if (MULTIPLAYER_ENABLED && ld) {
 		ld->SetIndeterminate(true);
 		ld->SetText("\nConnecting to multiplayer server");
 	}
@@ -133,6 +137,13 @@ NetworkSyncManager::CloseConnection()
 void
 NetworkSyncManager::PostStartUp(const std::string& ServerIP)
 {
+	if (!MULTIPLAYER_ENABLED) {
+		CloseConnection();
+		m_startupStatus = NSMANStartupStatus::NOT_SUCCESSFUL;
+		Locator::getLogger()->info(
+		  "Multiplayer is disabled in this build. Skipped connection");
+		return;
+	}
 	std::string sAddress;
 	unsigned short iPort;
 	m_startupStatus = NSMANStartupStatus::NOT_SUCCESSFUL;
@@ -209,6 +220,8 @@ NetworkSyncManager::ShouldSendMessage(bool requiresLogin) const
 void
 NetworkSyncManager::StartUp()
 {
+	if (!MULTIPLAYER_ENABLED)
+		return;
 	std::string ServerIP;
 
 	if (GetCommandlineArgument("netip", &ServerIP))
@@ -233,6 +246,13 @@ NetworkSyncManager::Logout()
 void
 NetworkSyncManager::Login(std::string user, std::string pass)
 {
+	if (!MULTIPLAYER_ENABLED) {
+		loggedIn = false;
+		loggedInUsername.clear();
+		Locator::getLogger()->info(
+		  "Multiplayer is disabled in this build. Skipped login");
+		return;
+	}
 	if (ShouldSendMessage(false))
 		curProtocol->Login(user, pass);
 }
@@ -585,6 +605,11 @@ class LunaNetworkSyncManager : public Luna<NetworkSyncManager>
 		}
 		return 1;
 	}
+	static int IsMultiplayerEnabled(T* /* p */, lua_State* L)
+	{
+		lua_pushboolean(L, MULTIPLAYER_ENABLED);
+		return 1;
+	}
 	LunaNetworkSyncManager()
 	{
 		ADD_METHOD(GetEvalScores);
@@ -595,6 +620,7 @@ class LunaNetworkSyncManager : public Luna<NetworkSyncManager>
 		ADD_METHOD(Login);
 		ADD_METHOD(Logout);
 		ADD_METHOD(IsETTP);
+		ADD_METHOD(IsMultiplayerEnabled);
 		ADD_METHOD(GetCurrentRoomName);
 		ADD_METHOD(GetLobbyUserList);
 		ADD_METHOD(GetLoggedInUsername);
