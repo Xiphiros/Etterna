@@ -24,9 +24,8 @@
 
 #include "arch/Threads/Threads.h"
 
-/* Assume TLS doesn't work until told otherwise.  It's ArchHooks's job to set
- * this. */
-bool RageThread::s_bSystemSupportsTLS = false;
+/* C++ thread_local is supported on all target platforms. */
+bool RageThread::s_bSystemSupportsTLS = true;
 bool RageThread::s_bIsShowingDialog = false;
 
 #define MAX_THREADS 128
