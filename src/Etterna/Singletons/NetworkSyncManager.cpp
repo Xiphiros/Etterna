@@ -28,9 +28,9 @@ NetworkSyncManager* NSMAN;
 extern Preference<std::string> g_sLastServer;
 Preference<unsigned int> autoConnectMultiplayer("AutoConnectMultiplayer", 1);
 
-// EtternaOnline multiplayer WebSocket connections and login are disabled in
-// this build so the client never opens a session or sends pack lists at start.
-// Themes test NSMAN:IsMultiplayerEnabled() to hide multiplayer entry points.
+// Multiplayer WebSocket connections and login are disabled in this build so
+// the client never opens a session or sends pack lists at start. Themes test
+// NSMAN:IsMultiplayerEnabled() to hide multiplayer entry points.
 static constexpr bool MULTIPLAYER_ENABLED = false;
 
 static LocalizedString CONNECTION_SUCCESSFUL("NetworkSyncManager",
