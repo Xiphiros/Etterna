@@ -54,7 +54,7 @@ Sprite::NewBlankSprite()
 
 Sprite::~Sprite()
 {
-	m_pParent = nullptr;
+	DetachDormancyParent();
 	UnloadTexture();
 }
 
@@ -458,9 +458,12 @@ Sprite::UpdateAnimationState()
 void
 Sprite::Update(float fDelta)
 {
+	const auto fHibernateBefore = m_fHibernateSecsLeft;
 	Actor::Update(fDelta); // do tweening
 	if (m_fHibernateSecsLeft > 0.0f)
 		return;
+	if (fHibernateBefore > 0.0f)
+		fDelta = std::max(0.0f, fDelta - fHibernateBefore);
 
 	const auto bSkipThisMovieUpdate = m_bSkipNextUpdate;
 	m_bSkipNextUpdate = false;
@@ -1106,6 +1109,8 @@ Sprite::SetTexCoordVelocity(float fVelX, float fVelY)
 	MarkDormancyDirty();
 }
 
+// Exact dynamic type check allows Sprite and Quad (which adds no Update
+// state) while excluding Sprite subclasses such as BGAnimationLayer.
 bool
 Sprite::IsSelfDormantWhenHidden() const
 {
