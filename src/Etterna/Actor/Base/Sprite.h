@@ -71,7 +71,9 @@ class Sprite : public Actor
 		m_States = new_states;
 		RecalcAnimationLengthSeconds();
 		SetState(0);
+		MarkDormancyDirty();
 	}
+	[[nodiscard]] auto IsSelfDormantWhenHidden() const -> bool override;
 
 	[[nodiscard]] auto GetTexturePath() const -> std::string;
 
