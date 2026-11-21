@@ -40,23 +40,21 @@ ActorFrame::ActorFrame()
 	m_diffuseColor = RageColor(1, 1, 1, 1);
 	m_specularColor = RageColor(1, 1, 1, 1);
 	m_lightDirection = RageVector3(0, 0, 1);
+	m_pFirstDormancyChild = nullptr;
 }
 
 ActorFrame::~ActorFrame()
 {
-	if (m_bDeleteChildren) {
+	if (m_bDeleteChildren)
 		DeleteAllChildren();
-	} else {
-		for (auto* a : m_SubActors) {
-			if (a != nullptr && a->GetParent() == this)
-				a->ClearParentOnDestroy();
-		}
-	}
+	while (m_pFirstDormancyChild != nullptr)
+		m_pFirstDormancyChild->DetachDormancyParent();
 }
 
 ActorFrame::ActorFrame(const ActorFrame& cpy)
   : Actor(cpy)
 {
+	m_pFirstDormancyChild = nullptr;
 #define CPY(x) this->x = cpy.x;
 	CPY(m_bPropagateCommands);
 	CPY(m_bDeleteChildren);
@@ -167,6 +165,7 @@ ActorFrame::AddChild(Actor* pActor)
 	m_SubActors.push_back(pActor);
 
 	pActor->SetParent(this);
+	pActor->AttachDormancyParent(this);
 	MarkDormancyDirty();
 }
 
@@ -176,6 +175,11 @@ ActorFrame::RemoveChild(Actor* pActor)
 	const auto iter = find(m_SubActors.begin(), m_SubActors.end(), pActor);
 	if (iter != m_SubActors.end()) {
 		m_SubActors.erase(iter);
+		if (pActor != nullptr && pActor->GetDormancyParent() == this &&
+			find(m_SubActors.begin(), m_SubActors.end(), pActor) ==
+			  m_SubActors.end()) {
+			pActor->DetachDormancyParent();
+		}
 		MarkDormancyDirty();
 	}
 }
@@ -204,6 +208,8 @@ ActorFrame::GetChild(const std::string& sName)
 void
 ActorFrame::RemoveAllChildren()
 {
+	while (m_pFirstDormancyChild != nullptr)
+		m_pFirstDormancyChild->DetachDormancyParent();
 	m_SubActors.clear();
 	MarkDormancyDirty();
 }
@@ -509,6 +515,9 @@ ActorFrame::IsFirstUpdate() const
 	return m_bFirstUpdate;
 }
 
+// Only plain ActorFrame and ActorFrameAutoDeleteChildren qualify; derived
+// frames (Screen, WheelBase, ActorScroller, Transition, BGAnimationLayer,
+// NoteField, ActorFrameTexture) run custom per-frame logic even when hidden.
 bool
 ActorFrame::IsSelfDormantWhenHidden() const
 {
@@ -633,6 +642,8 @@ ActorFrame::SortByDrawOrder()
 void
 ActorFrame::DeleteAllChildren()
 {
+	while (m_pFirstDormancyChild != nullptr)
+		m_pFirstDormancyChild->DetachDormancyParent();
 	for (auto& m_SubActor : m_SubActors)
 		delete m_SubActor;
 	m_SubActors.clear();
