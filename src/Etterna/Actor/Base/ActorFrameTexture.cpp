@@ -18,6 +18,7 @@ ActorFrameTexture::ActorFrameTexture()
 	m_bAlphaBuffer = false;
 	m_bFloat = false;
 	m_bPreserveTexture = false;
+	m_bMSAA = false;
 	static uint64_t i = 0;
 	++i;
 	m_sTextureName =
@@ -65,6 +66,7 @@ ActorFrameTexture::Create()
 	param.bWithDepthBuffer = m_bDepthBuffer;
 	param.bWithAlpha = m_bAlphaBuffer;
 	param.bFloat = m_bFloat;
+	param.bWithMSAA = m_bMSAA;
 	param.iWidth = static_cast<int>(m_size.x + 0.5f);
 	param.iHeight = static_cast<int>(m_size.y + 0.5f);
 	m_pRenderTarget = new RageTextureRenderTarget(id, param);
@@ -120,6 +122,11 @@ class LunaActorFrameTexture : public Luna<ActorFrameTexture>
 		p->EnablePreserveTexture(BArg(1));
 		COMMON_RETURN_SELF;
 	}
+	static int EnableMSAA(T* p, lua_State* L)
+	{
+		p->EnableMSAA(BArg(1));
+		COMMON_RETURN_SELF;
+	}
 	static int SetTextureName(T* p, lua_State* L)
 	{
 		p->SetTextureName(SArg(1));
@@ -143,6 +150,7 @@ class LunaActorFrameTexture : public Luna<ActorFrameTexture>
 		ADD_METHOD(EnableAlphaBuffer);
 		ADD_METHOD(EnableFloat);
 		ADD_METHOD(EnablePreserveTexture);
+		ADD_METHOD(EnableMSAA);
 		ADD_METHOD(SetTextureName);
 		ADD_METHOD(GetTexture);
 	}
