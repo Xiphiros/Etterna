@@ -899,6 +899,7 @@ SongManager::ReconcileChartKeysForReloadedSong(
   Song* reloadedSong,
   const std::vector<std::string>& oldChartkeys)
 {
+	m_bGroupsSorted = false;
 	std::set<std::string> ckToRepoint{};
 	for (const auto& ck : oldChartkeys) {
 		SONGMAN->StepsByKey.erase(ck);
@@ -1766,6 +1767,12 @@ SongManager::EnsureGroupsSorted()
 		SongUtil::SortSongPointerArrayByTitle(group.second);
 	}
 	m_bGroupsSorted = true;
+}
+
+void
+SongManager::InvalidateGroupSort()
+{
+	m_bGroupsSorted = false;
 }
 
 void
