@@ -153,6 +153,7 @@ class SongManager
 	std::vector<std::string> playlistGroups; // To delete from groupderps when
 											 // rebuilding
 											 // playlist groups
+	void EnsureGroupsSorted();
 
 	static void FinalizeSong(Song* pNewSong, const std::string& dir);
 	bool OpenSongFolder(const Song* pSong);
@@ -174,6 +175,7 @@ class SongManager
 	static bool InstallSmzip(const std::string& zipFile);
 
   protected:
+	bool m_bGroupsSorted = false;
 	void LoadStepManiaSongDir(std::string sDir, LoadingWindow* ld);
 	static auto IsSongDir(const std::string& sDir) -> bool;
 	auto AddGroup(const std::string& sDir, const std::string& sGroupDirName)
