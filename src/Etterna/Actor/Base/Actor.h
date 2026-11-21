@@ -15,6 +15,7 @@
 class XNode;
 struct lua_State;
 class LuaClass;
+class ActorFrame;
 
 using apActorCommands = std::shared_ptr<LuaReference>;
 
@@ -650,19 +651,21 @@ class Actor : public MessageSubscriber
 	}
 	[[nodiscard]] auto GetEffect() const -> Effect { return m_Effect; }
 #endif
-	void MarkDormancyDirty()
+	void MarkDormancyDirty();
+	void AttachDormancyParent(ActorFrame* pParent);
+	void DetachDormancyParent();
+	[[nodiscard]] auto GetDormancyParent() const -> ActorFrame*
 	{
-		for (Actor* p = this; p != nullptr; p = p->m_pParent) {
-			if (p->m_bDormancyDirty)
-				break;
-			p->m_bDormancyDirty = true;
-		}
+		return m_pDormancyParent;
 	}
 	[[nodiscard]] auto BaseDormantWhenHidden() const -> bool
 	{
 		return m_fHibernateSecsLeft <= 0.0f && m_Tweens.empty() &&
-			   m_WrapperStates.empty() && m_Effect == no_effect;
+			   m_WrapperStates.empty() && m_Effect == no_effect &&
+			   m_EffectClock == CLOCK_TIMER;
 	}
+	// Exact dynamic type check prevents Actor subclasses with custom Update or
+	// UpdateInternal logic from inheriting dormancy when hidden.
 	[[nodiscard]] virtual auto IsSelfDormantWhenHidden() const -> bool
 	{
 		return typeid(*this) == typeid(Actor) && BaseDormantWhenHidden();
@@ -675,7 +678,6 @@ class Actor : public MessageSubscriber
 		}
 		return m_bSubtreeDormant;
 	}
-	void ClearParentOnDestroy() { m_pParent = nullptr; }
 	[[nodiscard]] auto GetSecsIntoEffect() const -> float
 	{
 		return m_fSecsIntoEffect;
@@ -703,7 +705,11 @@ class Actor : public MessageSubscriber
 						 std::string& err) -> bool;
 	auto SetEffectHoldAtFull(float haf, std::string& err) -> bool;
 	void SetEffectOffset(float fTime) { m_fEffectOffset = fTime; }
-	void SetEffectClock(EffectClock c) { m_EffectClock = c; }
+	void SetEffectClock(EffectClock c)
+	{
+		m_EffectClock = c;
+		MarkDormancyDirty();
+	}
 	void SetEffectClockString(const std::string& s); // convenience
 
 	void SetEffectMagnitude(const RageVector3& vec)
@@ -873,6 +879,11 @@ class Actor : public MessageSubscriber
 	float m_fHibernateSecsLeft{ 0.0f };
 	mutable bool m_bDormancyDirty{ true };
 	mutable bool m_bSubtreeDormant{ false };
+	// Bidirectional link to an owning ActorFrame's live m_SubActors list; kept
+	// separate from m_pParent, which copies and unattached prototypes share.
+	ActorFrame* m_pDormancyParent{ nullptr };
+	Actor* m_pPrevDormancySibling{ nullptr };
+	Actor* m_pNextDormancySibling{ nullptr };
 
 	/** @brief Some general information about the Tween. */
 	struct TweenInfo
