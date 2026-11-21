@@ -238,6 +238,24 @@ class Song
 		return translitfulltitle;
 	}
 
+	[[nodiscard]] auto GetSortMainTitle() const -> const std::string&
+	{
+		return m_sSortMainTitle;
+	}
+	[[nodiscard]] auto GetSortSubTitle() const -> const std::string&
+	{
+		return m_sSortSubTitle;
+	}
+	[[nodiscard]] auto GetSortArtist() const -> const std::string&
+	{
+		return m_sSortArtist;
+	}
+	[[nodiscard]] auto GetSortAuthor() const -> const std::string&
+	{
+		return m_sSortAuthor;
+	}
+	void UpdateSortKeys();
+
 	/** @brief The version of the song/file. */
 	float m_fVersion;
 	/** @brief The genre of the song/file. */
@@ -532,6 +550,10 @@ class Song
 	std::vector<Steps*> m_UnknownStyleSteps;
 
   private:
+	std::string m_sSortMainTitle;
+	std::string m_sSortSubTitle;
+	std::string m_sSortArtist;
+	std::string m_sSortAuthor;
 	bool isfavorited = false;
 	bool permamirror = false;
 	bool hasgoal = false;
