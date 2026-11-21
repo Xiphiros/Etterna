@@ -8,6 +8,7 @@
 #include "Etterna/Models/Misc/ImageCache.h"
 #include "Etterna/Models/Misc/ThemeMetric.h"
 #include "Sprite.h"
+#include "Quad.h"
 
 #include <cassert>
 #include <algorithm>
@@ -53,6 +54,7 @@ Sprite::NewBlankSprite()
 
 Sprite::~Sprite()
 {
+	m_pParent = nullptr;
 	UnloadTexture();
 }
 
@@ -91,6 +93,7 @@ Sprite::InitState()
 	m_iCurState = 0;
 	m_fSecsIntoState = 0.0f;
 	m_bSkipNextUpdate = true;
+	MarkDormancyDirty();
 }
 
 void
@@ -275,6 +278,7 @@ Sprite::LoadFromNode(const XNode* pNode)
 
 	Actor::LoadFromNode(pNode);
 	RecalcAnimationLengthSeconds();
+	MarkDormancyDirty();
 }
 
 void
@@ -289,6 +293,7 @@ Sprite::UnloadTexture()
 		 * on a frame number that may be greater than the number of frames in
 		 * the newly loaded image. */
 		SetState(0);
+		MarkDormancyDirty();
 	}
 }
 
@@ -317,6 +322,7 @@ Sprite::EnableAnimation(bool bEnable)
 		 * GetEffectDeltaTime())
 		 */
 		m_bSkipNextUpdate = true;
+		MarkDormancyDirty();
 	}
 }
 
@@ -344,6 +350,7 @@ Sprite::SetTexture(RageTexture* pTexture)
 	// Load default states if we haven't before.
 	if (m_States.empty())
 		LoadStatesFromTexture();
+	MarkDormancyDirty();
 }
 
 void
@@ -393,6 +400,7 @@ Sprite::LoadStatesFromTexture()
 		newState.fDelay = 0.1f;
 		newState.rect = RectF(0, 0, 1, 1);
 		m_States.push_back(newState);
+		MarkDormancyDirty();
 		return;
 	}
 
@@ -403,6 +411,7 @@ Sprite::LoadStatesFromTexture()
 		m_States.push_back(newState);
 	}
 	RecalcAnimationLengthSeconds();
+	MarkDormancyDirty();
 }
 
 void
@@ -450,9 +459,13 @@ void
 Sprite::Update(float fDelta)
 {
 	Actor::Update(fDelta); // do tweening
+	if (m_fHibernateSecsLeft > 0.0f)
+		return;
 
 	const auto bSkipThisMovieUpdate = m_bSkipNextUpdate;
 	m_bSkipNextUpdate = false;
+	if (bSkipThisMovieUpdate)
+		MarkDormancyDirty();
 
 	if (!m_bIsAnimating)
 		return;
@@ -1090,6 +1103,17 @@ Sprite::SetTexCoordVelocity(float fVelX, float fVelY)
 {
 	m_fTexCoordVelocityX = fVelX;
 	m_fTexCoordVelocityY = fVelY;
+	MarkDormancyDirty();
+}
+
+bool
+Sprite::IsSelfDormantWhenHidden() const
+{
+	return (typeid(*this) == typeid(Sprite) || typeid(*this) == typeid(Quad)) &&
+		   BaseDormantWhenHidden() && !m_bSkipNextUpdate &&
+		   m_States.size() <= 1 &&
+		   (m_pTexture == nullptr || !m_pTexture->IsAMovie()) &&
+		   m_fTexCoordVelocityX == 0.0f && m_fTexCoordVelocityY == 0.0f;
 }
 
 void
