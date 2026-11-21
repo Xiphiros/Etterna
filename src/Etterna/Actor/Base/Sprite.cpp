@@ -1110,7 +1110,7 @@ Sprite::SetTexCoordVelocity(float fVelX, float fVelY)
 }
 
 // Exact dynamic type check allows Sprite and Quad (which adds no Update
-// state) while excluding Sprite subclasses such as BGAnimationLayer.
+// state) without letting any further Sprite subclass inherit dormancy.
 bool
 Sprite::IsSelfDormantWhenHidden() const
 {
