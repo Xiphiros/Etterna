@@ -291,7 +291,8 @@ Profile::HandleStatsPrefixChange(std::string dir)
 	const auto total_gameplay_seconds = m_iTotalGameplaySeconds;
 	const auto user_table = m_UserTable;
 	auto need_to_create_file = false;
-	if (IsAFile(dir + PROFILEMAN->GetStatsPrefix() + ETT_XML)) {
+	const auto statsDir = dir + PROFILEMAN->GetStatsPrefix();
+	if (IsAFile(statsDir + ETT_XML) || IsAFile(statsDir + ETT_XML_GZ)) {
 		LoadAllFromDir(dir, nullptr);
 	} else {
 		ClearStats();
