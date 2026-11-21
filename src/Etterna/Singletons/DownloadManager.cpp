@@ -80,6 +80,12 @@ static Preference<unsigned int> automaticSync("automaticScoreSync", 1);
 // (ETTProtocol::ReportHighScore, called from StageStats).
 static constexpr bool SCORE_UPLOAD_ENABLED = false;
 
+// EtternaOnline HTTP login is disabled in this build so self-built sessions
+// never authenticate with or hold a token for the online service. Themes test
+// DLMAN:IsOnlineLoginEnabled() to adapt their UI; unauthenticated pack tags,
+// version checks, pack search, and pack downloads remain enabled.
+static constexpr bool ONLINE_LOGIN_ENABLED = false;
+
 //
 static const std::string UI_HOME_PAGE = "https://etternaonline.com";
 static const std::string PROJECT_HOME_PAGE =
@@ -1189,12 +1195,18 @@ DownloadManager::Handle401And429Response(const std::string& endpoint,
 bool
 DownloadManager::LoggedIn()
 {
-	return !authToken.empty();
+	return ONLINE_LOGIN_ENABLED && !authToken.empty();
 }
 
 void
 DownloadManager::OnLogin()
 {
+	if (!ONLINE_LOGIN_ENABLED) {
+		authToken.clear();
+		sessionUser.clear();
+		loggingIn = false;
+		return;
+	}
 	Locator::getLogger()->info("Successful login as {}", sessionUser);
 	RefreshUserData();
 	RefreshFavorites();
@@ -1221,6 +1233,16 @@ void
 DownloadManager::LoginWithToken(const std::string& sessionToken,
 								std::function<void(bool)> done)
 {
+	if (!ONLINE_LOGIN_ENABLED) {
+		authToken.clear();
+		sessionUser.clear();
+		loggingIn = false;
+		Locator::getLogger()->info(
+		  "Online login is disabled in this build. Skipped token login");
+		if (done)
+			done(false);
+		return;
+	}
 	authToken = sessionToken;
 	try {
 		auto jwt = jwt::decode(authToken);
@@ -1239,6 +1261,22 @@ DownloadManager::LoginRequest(const std::string& user,
 							  const std::string& pass,
 							  std::function<void(bool loggedIn)> callback)
 {
+	if (!ONLINE_LOGIN_ENABLED) {
+		authToken.clear();
+		sessionUser.clear();
+		loggingIn = false;
+		Locator::getLogger()->info(
+		  "Online login is disabled in this build. Skipped login request");
+		if (MESSAGEMAN != nullptr) {
+			Message msg("LoginFailed");
+			msg.SetParam(
+			  "why", std::string("Online login is disabled in this build."));
+			MESSAGEMAN->Broadcast(msg);
+		}
+		if (callback)
+			callback(false);
+		return;
+	}
 	if (loggingIn || user.empty()) {
 		return;
 	}
@@ -6646,6 +6684,16 @@ class LunaDownloadManager : public Luna<DownloadManager>
 		lua_pushboolean(L, p->LoggedIn());
 		return 1;
 	}
+	static int IsOnlineLoginEnabled(T* /* p */, lua_State* L)
+	{
+		lua_pushboolean(L, ONLINE_LOGIN_ENABLED);
+		return 1;
+	}
+	static int IsScoreUploadEnabled(T* /* p */, lua_State* L)
+	{
+		lua_pushboolean(L, SCORE_UPLOAD_ENABLED);
+		return 1;
+	}
 	static int Login(T* p, lua_State* L)
 	{
 		std::string user = SArg(1);
@@ -7099,6 +7147,8 @@ class LunaDownloadManager : public Luna<DownloadManager>
 		ADD_METHOD(GetDownloads);
 		ADD_METHOD(GetToken);
 		ADD_METHOD(IsLoggedIn);
+		ADD_METHOD(IsOnlineLoginEnabled);
+		ADD_METHOD(IsScoreUploadEnabled);
 		ADD_METHOD(Login);
 		ADD_METHOD(LoginWithToken);
 		ADD_METHOD(GetUsername);
