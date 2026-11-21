@@ -74,10 +74,9 @@ static Preference<unsigned int> automaticSync("automaticScoreSync", 1);
 // upload carries the SHA-256 of the running binary (exe_hash in ScoreToJSON),
 // which differs from the release binary's, and the service publishes no rule
 // for self-built clients. Every API score upload ends in UploadScore or
-// UploadBulkScores, so those two and ShouldUploadScores are the only places
-// that test this. Scores are still saved in the local profile. A player
-// logged in to a multiplayer server still reports each score to that server
-// (ETTProtocol::ReportHighScore, called from StageStats).
+// UploadBulkScores, so those two and ShouldUploadScores gate uploads on this
+// flag while IsScoreUploadEnabled exposes it to Lua. Scores are still saved
+// in the local profile.
 static constexpr bool SCORE_UPLOAD_ENABLED = false;
 
 // EtternaOnline HTTP login is disabled in this build so self-built sessions
