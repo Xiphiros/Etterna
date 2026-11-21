@@ -251,6 +251,7 @@ struct RenderTargetParam
 	bool bWithDepthBuffer{ false };
 	bool bWithAlpha{ false };
 	bool bFloat{ false };
+	bool bWithMSAA{ false };
 };
 
 struct RageTextureLock
