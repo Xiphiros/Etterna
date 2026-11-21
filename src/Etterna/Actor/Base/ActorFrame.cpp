@@ -44,8 +44,14 @@ ActorFrame::ActorFrame()
 
 ActorFrame::~ActorFrame()
 {
-	if (m_bDeleteChildren)
+	if (m_bDeleteChildren) {
 		DeleteAllChildren();
+	} else {
+		for (auto* a : m_SubActors) {
+			if (a != nullptr && a->GetParent() == this)
+				a->ClearParentOnDestroy();
+		}
+	}
 }
 
 ActorFrame::ActorFrame(const ActorFrame& cpy)
@@ -89,6 +95,7 @@ ActorFrame::InitState()
 	}
 
 	Actor::InitState();
+	MarkDormancyDirty();
 }
 
 void
@@ -160,14 +167,17 @@ ActorFrame::AddChild(Actor* pActor)
 	m_SubActors.push_back(pActor);
 
 	pActor->SetParent(this);
+	MarkDormancyDirty();
 }
 
 void
 ActorFrame::RemoveChild(Actor* pActor)
 {
 	const auto iter = find(m_SubActors.begin(), m_SubActors.end(), pActor);
-	if (iter != m_SubActors.end())
+	if (iter != m_SubActors.end()) {
 		m_SubActors.erase(iter);
+		MarkDormancyDirty();
+	}
 }
 
 void
@@ -195,6 +205,7 @@ void
 ActorFrame::RemoveAllChildren()
 {
 	m_SubActors.clear();
+	MarkDormancyDirty();
 }
 
 void
@@ -498,12 +509,46 @@ ActorFrame::IsFirstUpdate() const
 	return m_bFirstUpdate;
 }
 
+bool
+ActorFrame::IsSelfDormantWhenHidden() const
+{
+	return (typeid(*this) == typeid(ActorFrame) ||
+			typeid(*this) == typeid(ActorFrameAutoDeleteChildren)) &&
+		   BaseDormantWhenHidden() && !m_bFirstUpdate &&
+		   m_UpdateFunction.IsNil();
+}
+
+bool
+ActorFrame::IsSubtreeDormant() const
+{
+	if (m_bDormancyDirty) {
+		bool bDormant = IsSelfDormantWhenHidden();
+		if (bDormant) {
+			for (const auto* a : m_SubActors) {
+				if (!a->IsSubtreeDormant()) {
+					bDormant = false;
+					break;
+				}
+			}
+		}
+		m_bSubtreeDormant = bDormant;
+		m_bDormancyDirty = false;
+	}
+	return m_bSubtreeDormant;
+}
+
 void
 ActorFrame::UpdateInternal(float fDeltaTime)
 {
 	//	LOG->Trace( "ActorFrame::Update( %f )", fDeltaTime );
-	if (m_bFirstUpdate)
+	if (!m_bVisible && IsSubtreeDormant()) {
+		return;
+	}
+
+	if (m_bFirstUpdate) {
 		m_bFirstUpdate = false;
+		MarkDormancyDirty();
+	}
 
 	fDeltaTime *= m_fUpdateRate;
 
@@ -591,6 +636,7 @@ ActorFrame::DeleteAllChildren()
 	for (auto& m_SubActor : m_SubActors)
 		delete m_SubActor;
 	m_SubActors.clear();
+	MarkDormancyDirty();
 }
 
 void
