@@ -58,7 +58,6 @@ static const char chXMLExclamation = '!';
 static const char chXMLDash = '-';
 
 static std::map<std::string, std::string> g_mapEntitiesToChars;
-static std::map<char, std::string> g_mapCharsToEntities;
 
 static void
 InitEntities()
@@ -93,7 +92,6 @@ InitEntities()
 
 	for (auto ent : EntityTable) {
 		g_mapEntitiesToChars[ent.pEntity] = std::string(1, ent.c);
-		g_mapCharsToEntities[ent.c] = ent.pEntity;
 	}
 }
 
@@ -412,85 +410,182 @@ LoadInternal(XNode* pNode,
 	return iOffset;
 }
 
+struct XmlBufferedWriter
+{
+	static constexpr size_t FLUSH_THRESHOLD = 64 * 1024;
+	RageFileBasic& f;
+	std::string buf;
+
+	explicit XmlBufferedWriter(RageFileBasic& file)
+	  : f(file)
+	{
+		buf.reserve(FLUSH_THRESHOLD + 4096);
+	}
+
+	bool FlushChunk()
+	{
+		if (buf.empty())
+			return true;
+		if (f.Write(buf.data(), buf.size()) == -1)
+			return false;
+		buf.clear();
+		return true;
+	}
+
+	bool WriteRaw(const char* data, size_t len)
+	{
+		if (len >= FLUSH_THRESHOLD)
+			return FlushChunk() && f.Write(data, len) != -1;
+		if (buf.size() + len > FLUSH_THRESHOLD && !FlushChunk())
+			return false;
+		buf.append(data, len);
+		return true;
+	}
+
+	bool WriteRaw(const std::string& s) { return WriteRaw(s.data(), s.size()); }
+
+	bool WriteChar(char c)
+	{
+		if (buf.size() >= FLUSH_THRESHOLD && !FlushChunk())
+			return false;
+		buf.push_back(c);
+		return true;
+	}
+
+	bool WriteTabs(int count)
+	{
+		while (count > 0) {
+			const size_t chunk = count < static_cast<int>(FLUSH_THRESHOLD)
+								   ? static_cast<size_t>(count)
+								   : FLUSH_THRESHOLD;
+			if (buf.size() + chunk > FLUSH_THRESHOLD && !FlushChunk())
+				return false;
+			buf.append(chunk, '\t');
+			count -= static_cast<int>(chunk);
+		}
+		return true;
+	}
+
+	bool WriteEscaped(const std::string& s)
+	{
+		size_t iOffset = 0;
+		while (iOffset < s.size()) {
+			const size_t iHit = s.find_first_of("&<>'\"", iOffset);
+			if (iHit == std::string::npos)
+				return WriteRaw(s.data() + iOffset, s.size() - iOffset);
+			if (iHit > iOffset && !WriteRaw(s.data() + iOffset, iHit - iOffset))
+				return false;
+			const char* entity = nullptr;
+			size_t entityLen = 0;
+			switch (s[iHit]) {
+				case '&':
+					entity = "&amp;";
+					entityLen = 5;
+					break;
+				case '<':
+					entity = "&lt;";
+					entityLen = 4;
+					break;
+				case '>':
+					entity = "&gt;";
+					entityLen = 4;
+					break;
+				case '\'':
+					entity = "&apos;";
+					entityLen = 6;
+					break;
+				case '"':
+					entity = "&quot;";
+					entityLen = 6;
+					break;
+			}
+			if (!WriteRaw(entity, entityLen))
+				return false;
+			iOffset = iHit + 1;
+		}
+		return true;
+	}
+};
+
 bool
 GetXMLInternal(const XNode* pNode,
-			   RageFileBasic& f,
+			   XmlBufferedWriter& out,
 			   bool bWriteTabs,
 			   int& iTabBase)
 {
-#define WRITE(x)                                                               \
-	if (f.Write(x) == -1)                                                      \
-	return false
-	// tab
-	WRITE("\r\n");
-	if (bWriteTabs)
-		for (int i = 0; i < iTabBase; i++)
-			WRITE("\t");
+	if (!out.WriteRaw("\r\n", 2))
+		return false;
+	if (bWriteTabs && !out.WriteTabs(iTabBase))
+		return false;
 
 	// <TAG
-	WRITE("<");
-	WRITE(pNode->GetName());
+	if (!out.WriteChar('<') || !out.WriteRaw(pNode->GetName()))
+		return false;
 
-	// <TAG Attr1="Val1"
+	// <TAG Attr1='Val1'
+	std::string attr;
 	FOREACH_CONST_Attr(pNode, p)
 	{
 		if (p->first == XNode::TEXT_ATTRIBUTE)
 			continue;
-		std::string attr(p->second->GetValue<std::string>());
-		ReplaceEntityText(attr, g_mapCharsToEntities);
-		WRITE(" ");
-		WRITE(p->first);
-		WRITE("='");
-		WRITE(attr);
-		WRITE("'");
+		attr.clear();
+		p->second->GetValue(attr);
+		if (!out.WriteChar(' ') || !out.WriteRaw(p->first) ||
+			!out.WriteRaw("='", 2) || !out.WriteEscaped(attr) ||
+			!out.WriteChar('\''))
+			return false;
 	}
 
 	if (pNode->ChildrenEmpty() &&
 		pNode->GetAttr(XNode::TEXT_ATTRIBUTE) == nullptr) {
-		// <TAG Attr1="Val1"/> alone tag
-		WRITE("/>");
+		// <TAG Attr1='Val1'/> alone tag
+		if (!out.WriteRaw("/>", 2))
+			return false;
 	} else {
-		// <TAG Attr1="Val1"> and get child
-		WRITE(">");
+		// <TAG Attr1='Val1'> and get child
+		if (!out.WriteChar('>'))
+			return false;
 
-		if (!pNode->ChildrenEmpty())
+		const bool bHasChildren = !pNode->ChildrenEmpty();
+		if (bHasChildren)
 			iTabBase++;
 
-		FOREACH_CONST_Child(
-		  pNode,
-		  p) if (!GetXMLInternal(p, f, bWriteTabs, iTabBase)) return false;
+		FOREACH_CONST_Child(pNode, p)
+		{
+			if (!GetXMLInternal(p, out, bWriteTabs, iTabBase))
+				return false;
+		}
 
 		// Text Value
 		const XNodeValue* pText = pNode->GetAttr(XNode::TEXT_ATTRIBUTE);
 		if (pText != nullptr) {
-			if (!pNode->ChildrenEmpty()) {
-				WRITE("\r\n");
-				if (bWriteTabs)
-					for (int i = 0; i < iTabBase; i++)
-						WRITE("\t");
+			if (bHasChildren) {
+				if (!out.WriteRaw("\r\n", 2))
+					return false;
+				if (bWriteTabs && !out.WriteTabs(iTabBase))
+					return false;
 			}
 			std::string s;
 			pText->GetValue(s);
-			ReplaceEntityText(s, g_mapCharsToEntities);
-			WRITE(s);
+			if (!out.WriteEscaped(s))
+				return false;
 		}
 
 		// </TAG> CloseTag
-		if (!pNode->ChildrenEmpty()) {
-			WRITE("\r\n");
-			if (bWriteTabs)
-				for (int i = 0; i < iTabBase - 1; i++)
-					WRITE("\t");
+		if (bHasChildren) {
+			if (!out.WriteRaw("\r\n", 2))
+				return false;
+			if (bWriteTabs && !out.WriteTabs(iTabBase - 1))
+				return false;
 		}
-		WRITE("</");
-		WRITE(pNode->GetName());
-		WRITE(">");
+		if (!out.WriteRaw("</", 2) || !out.WriteRaw(pNode->GetName()) ||
+			!out.WriteChar('>'))
+			return false;
 
-		if (!pNode->ChildrenEmpty())
+		if (bHasChildren)
 			iTabBase--;
 	}
 	return true;
-#undef WRITE
 }
 } // namespace
 
@@ -505,8 +600,8 @@ bool
 XmlFileUtil::GetXML(const XNode* pNode, RageFileBasic& f, bool bWriteTabs)
 {
 	int iTabBase = 0;
-	InitEntities();
-	return GetXMLInternal(pNode, f, bWriteTabs, iTabBase);
+	XmlBufferedWriter out(f);
+	return GetXMLInternal(pNode, out, bWriteTabs, iTabBase) && out.FlushChunk();
 }
 
 std::string
@@ -514,8 +609,9 @@ XmlFileUtil::GetXML(const XNode* pNode)
 {
 	RageFileObjMem f;
 	int iTabBase = 0;
-	InitEntities();
-	GetXMLInternal(pNode, f, true, iTabBase);
+	XmlBufferedWriter out(f);
+	GetXMLInternal(pNode, out, true, iTabBase);
+	out.FlushChunk();
 	return f.GetString();
 }
 
@@ -525,15 +621,19 @@ XmlFileUtil::SaveToFile(const XNode* pNode,
 						const std::string& sStylesheet,
 						bool bWriteTabs)
 {
-	f.PutLine("<?xml version=\"1.0\" encoding=\"UTF-8\" ?>");
-	if (!sStylesheet.empty())
-		f.PutLine("<?xml-stylesheet type=\"text/xsl\" href=\"" + sStylesheet +
-				  "\"?>");
-	int iTabBase = 0;
-	InitEntities();
-	if (!GetXMLInternal(pNode, f, bWriteTabs, iTabBase))
+	if (f.PutLine("<?xml version=\"1.0\" encoding=\"UTF-8\" ?>") == -1)
 		return false;
-	f.PutLine("");
+	if (!sStylesheet.empty()) {
+		if (f.PutLine("<?xml-stylesheet type=\"text/xsl\" href=\"" +
+					  sStylesheet + "\"?>") == -1)
+			return false;
+	}
+	int iTabBase = 0;
+	XmlBufferedWriter out(f);
+	if (!GetXMLInternal(pNode, out, bWriteTabs, iTabBase) || !out.FlushChunk())
+		return false;
+	if (f.PutLine("") == -1)
+		return false;
 	if (f.Flush() == -1)
 		return false;
 	return true;
