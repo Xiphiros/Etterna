@@ -64,7 +64,8 @@ SongUtil::GetSteps(const Song* pSong,
 		if (uHash != 0 && uHash != pSteps->GetHash())
 			continue;
 
-		if (filteringSteps && FILTERMAN != nullptr && FILTERMAN->AnyActiveFilter()) {
+		if (filteringSteps && FILTERMAN != nullptr &&
+			FILTERMAN->AnyActiveFilter()) {
 			// iterating over all rates until it just works
 			// explanation in MusicWheel::FilterBySkillsets
 			auto success = false;
@@ -362,17 +363,12 @@ static bool
 CompareSongPointersByTitle(const Song* pSong1, const Song* pSong2)
 {
 	// Prefer transliterations to full titles
-	auto s1 = pSong1->GetTranslitMainTitle();
-	auto s2 = pSong2->GetTranslitMainTitle();
-	if (s1 == s2) {
-		s1 = pSong1->GetTranslitSubTitle();
-		s2 = pSong2->GetTranslitSubTitle();
+	auto ret = strcmp(pSong1->GetSortMainTitle().c_str(),
+					  pSong2->GetSortMainTitle().c_str());
+	if (ret == 0) {
+		ret = strcmp(pSong1->GetSortSubTitle().c_str(),
+					 pSong2->GetSortSubTitle().c_str());
 	}
-
-	SongUtil::MakeSortString(s1);
-	SongUtil::MakeSortString(s2);
-
-	const auto ret = strcmp(s1.c_str(), s2.c_str());
 	if (ret < 0)
 		return true;
 	if (ret > 0)
@@ -388,17 +384,12 @@ static bool
 CompareSongPointersByArtist(const Song* pSong1, const Song* pSong2)
 {
 	// Prefer transliterations
-	auto s1 = pSong1->GetTranslitArtist();
-	auto s2 = pSong2->GetTranslitArtist();
-	if (s1 == s2) {
-		s1 = pSong1->GetTranslitMainTitle();
-		s2 = pSong2->GetTranslitMainTitle();
+	auto ret =
+	  strcmp(pSong1->GetSortArtist().c_str(), pSong2->GetSortArtist().c_str());
+	if (ret == 0) {
+		ret = strcmp(pSong1->GetSortMainTitle().c_str(),
+					 pSong2->GetSortMainTitle().c_str());
 	}
-
-	SongUtil::MakeSortString(s1);
-	SongUtil::MakeSortString(s2);
-
-	const auto ret = strcmp(s1.c_str(), s2.c_str());
 	if (ret < 0)
 		return true;
 	if (ret > 0)
@@ -523,18 +514,12 @@ SongUtil::SortSongPointerArrayByDateAdded(std::vector<Song*>& vpSongsInOut)
 static bool
 CompareSongPointersByAuthor(const Song* pSong1, const Song* pSong2)
 {
-	
-	auto s1 = pSong1->GetOrTryAtLeastToGetSimfileAuthor();
-	auto s2 = pSong2->GetOrTryAtLeastToGetSimfileAuthor();
-	if (s1 == s2) {
-		s1 = pSong1->GetTranslitMainTitle();
-		s2 = pSong2->GetTranslitMainTitle();
+	auto ret =
+	  strcmp(pSong1->GetSortAuthor().c_str(), pSong2->GetSortAuthor().c_str());
+	if (ret == 0) {
+		ret = strcmp(pSong1->GetSortMainTitle().c_str(),
+					 pSong2->GetSortMainTitle().c_str());
 	}
-
-	SongUtil::MakeSortString(s1);
-	SongUtil::MakeSortString(s2);
-
-	const auto ret = strcmp(s1.c_str(), s2.c_str());
 	if (ret < 0)
 		return true;
 	if (ret > 0)
@@ -549,8 +534,7 @@ CompareSongPointersByAuthor(const Song* pSong1, const Song* pSong2)
 void
 SongUtil::SortSongPointerArrayByAuthor(std::vector<Song*>& vpSongsInOut)
 {
-	sort(
-	  vpSongsInOut.begin(), vpSongsInOut.end(), CompareSongPointersByAuthor);
+	sort(vpSongsInOut.begin(), vpSongsInOut.end(), CompareSongPointersByAuthor);
 }
 void
 AppendOctal(int n, int digits, std::string& out)
@@ -738,8 +722,8 @@ SongUtil::GetSectionNameFromSongAndSort(const Song* pSong, SortOrder so)
 			// guaranteed not empty
 			return pSong->m_sGroupName;
 		case SORT_TITLE:
-		case SORT_ARTIST: 
-		case SORT_CHART_AUTHOR:{
+		case SORT_ARTIST:
+		case SORT_CHART_AUTHOR: {
 			std::string s;
 			switch (so) {
 				case SORT_TITLE:
@@ -860,9 +844,10 @@ SongUtil::SortSongPointerArrayBySectionName(std::vector<Song*>& vpSongsInOut,
 }
 
 void
-SongUtil::SortSongPointerArrayByStepsTypeAndMeter(std::vector<Song*>& vpSongsInOut,
-												  StepsType st,
-												  Difficulty dc)
+SongUtil::SortSongPointerArrayByStepsTypeAndMeter(
+  std::vector<Song*>& vpSongsInOut,
+  StepsType st,
+  Difficulty dc)
 {
 	g_mapSongSortVal.clear();
 	for (auto& i : vpSongsInOut) {
@@ -1312,12 +1297,11 @@ SongArtistComparator(lua_State* L)
 	return 1;
 }
 
-const luaL_Reg SongUtilTable[] = { LIST_METHOD(GetPlayableSteps),
-								   LIST_METHOD(IsStepsTypePlayable),
-								   LIST_METHOD(IsStepsPlayable),
-								   LIST_METHOD(SongTitleComparator),
-								   LIST_METHOD(SongArtistComparator),
-								   { nullptr, nullptr } };
+const luaL_Reg SongUtilTable[] = {
+	LIST_METHOD(GetPlayableSteps),	   LIST_METHOD(IsStepsTypePlayable),
+	LIST_METHOD(IsStepsPlayable),	   LIST_METHOD(SongTitleComparator),
+	LIST_METHOD(SongArtistComparator), { nullptr, nullptr }
+};
 }
 
 LUA_REGISTER_NAMESPACE(SongUtil)
