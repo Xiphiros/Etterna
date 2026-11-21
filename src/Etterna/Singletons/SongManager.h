@@ -154,6 +154,7 @@ class SongManager
 											 // rebuilding
 											 // playlist groups
 	void EnsureGroupsSorted();
+	void InvalidateGroupSort();
 
 	static void FinalizeSong(Song* pNewSong, const std::string& dir);
 	bool OpenSongFolder(const Song* pSong);
