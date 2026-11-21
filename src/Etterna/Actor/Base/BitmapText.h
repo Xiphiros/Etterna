@@ -87,6 +87,8 @@ class BitmapText : public Actor
 	void CropToWidth(int width);
 
 	[[nodiscard]] auto EarlyAbortDraw() const -> bool override;
+	// Exact dynamic type check excludes BitmapText subclasses such as
+	// BPMDisplay, RollingNumbers, MenuTimer, and ColorBitmapText.
 	[[nodiscard]] auto IsSelfDormantWhenHidden() const -> bool override
 	{
 		return typeid(*this) == typeid(BitmapText) && BaseDormantWhenHidden();
