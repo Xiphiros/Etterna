@@ -34,6 +34,7 @@ class ActorFrameTexture : public ActorFrame
 	void EnableAlphaBuffer(bool b) { m_bAlphaBuffer = b; }
 	void EnableFloat(bool b) { m_bFloat = b; }
 	void EnablePreserveTexture(bool b) { m_bPreserveTexture = b; }
+	void EnableMSAA(bool b) { m_bMSAA = b; }
 
 	void Create();
 
@@ -49,6 +50,7 @@ class ActorFrameTexture : public ActorFrame
 	bool m_bAlphaBuffer;
 	bool m_bFloat;
 	bool m_bPreserveTexture;
+	bool m_bMSAA{ false };
 	/** @brief the name of this ActorFrameTexture. */
 	std::string m_sTextureName;
 };
