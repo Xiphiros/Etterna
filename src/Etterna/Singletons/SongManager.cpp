@@ -147,7 +147,15 @@ SongManager::InstallSmzip(const std::string& sZipFile)
 	auto zipfilename =
 	  sZipFile.substr(sZipFile.find_last_of('/') + 1, sZipFile.length() - 4);
 	// path being extracted
-	std::string doot = sZipFile;
+	std::string doot;
+
+	auto isUnsafePackName = [](const std::string& name) {
+		return name.empty() || name == "." || name == ".." ||
+			   name.find('/') != std::string::npos ||
+			   name.find('\\') != std::string::npos ||
+			   name.find(':') != std::string::npos ||
+			   name.find('\0') != std::string::npos;
+	};
 
 	auto names = fi.namelist();
 	std::set<std::string> folders{};
@@ -157,6 +165,11 @@ SongManager::InstallSmzip(const std::string& sZipFile)
 			continue;
 		}
 		auto realname = name.substr(0, name.find_first_of('/'));
+		if (isUnsafePackName(realname)) {
+			Locator::getLogger()->warn(
+			  "Skipping unsafe root folder '{}' in zip {}", realname, sZipFile);
+			continue;
+		}
 		folders.emplace(realname);
 	}
 	if (folders.size() > 0) {
@@ -177,25 +190,114 @@ SongManager::InstallSmzip(const std::string& sZipFile)
 			}
 		}
 		if (!foundCandidate) {
-			Locator::getLogger()->error("Couldn't find good enough folder to "
-										"extract in {}. Picked a random one ({})", sZipFile, doot);
+			Locator::getLogger()->error(
+			  "Couldn't find good enough folder to "
+			  "extract in {}. Picked a random one ({})",
+			  sZipFile,
+			  doot);
 		}
-	}
-	else {
+	} else {
 		Locator::getLogger()->error("Found no folders in zip {}...", sZipFile);
+		return false;
+	}
+
+	if (isUnsafePackName(doot)) {
+		Locator::getLogger()->warn(
+		  "Rejected unsafe pack folder '{}' in zip {}", doot, sZipFile);
 		return false;
 	}
 
 	std::string extractTo =
 	  downloadPacksToAdditionalSongs ? "/AdditionalSongs/" : "/Songs/";
+	const std::string destRoot =
+	  FILEMAN->ResolveSongFolder(extractTo, downloadPacksToAdditionalSongs);
+	if (destRoot.empty()) {
+		Locator::getLogger()->error(
+		  "Failed to resolve destination song folder for {}", sZipFile);
+		return false;
+	}
+	const auto destRootNorm =
+	  ghc::filesystem::path(destRoot).lexically_normal();
+
+	auto isUnsafeMemberPath = [&destRoot,
+							   &destRootNorm](const std::string& entry) {
+		if (entry.empty() || entry.front() == '/' ||
+			entry.find('\\') != std::string::npos ||
+			entry.find(':') != std::string::npos ||
+			entry.find('\0') != std::string::npos) {
+			return true;
+		}
+		for (size_t pos = 0; pos <= entry.size();) {
+			const auto slash = entry.find('/', pos);
+			const auto seg = slash == std::string::npos
+							   ? entry.substr(pos)
+							   : entry.substr(pos, slash - pos);
+			if (seg == "." || seg == "..") {
+				return true;
+			}
+			if (slash == std::string::npos) {
+				break;
+			}
+			pos = slash + 1;
+		}
+		const ghc::filesystem::path entryPath(entry);
+		if (entryPath.is_absolute() || entryPath.has_root_path()) {
+			return true;
+		}
+		const auto targetNorm =
+		  (ghc::filesystem::path(destRoot) / entryPath).lexically_normal();
+		const auto rel = targetNorm.lexically_relative(destRootNorm);
+		if (rel.empty() || rel == "." || rel.is_absolute() ||
+			rel.has_root_path()) {
+			return true;
+		}
+		const auto firstPart = *rel.begin();
+		if (firstPart.empty() || firstPart == "." || firstPart == "..") {
+			return true;
+		}
+		std::error_code ec;
+		ghc::filesystem::path cur = destRootNorm;
+		for (const auto& part : rel) {
+			if (part.empty() || part == ".") {
+				continue;
+			}
+			cur /= part;
+			if (ghc::filesystem::is_symlink(cur, ec)) {
+				return true;
+			}
+		}
+		return false;
+	};
 
 	auto filecnt = 0;
+	const std::string packPrefix = doot + "/";
 	for (auto& member : names) {
-		if (member.starts_with(doot + "/")) {
+		if (member.starts_with(packPrefix)) {
+			if (member.back() == '/') {
+				const std::string dirEntry =
+				  member == packPrefix ? doot
+									   : member.substr(0, member.size() - 1);
+				if (isUnsafeMemberPath(dirEntry)) {
+					Locator::getLogger()->warn(
+					  "Skipping unsafe zip directory '{}' in {}",
+					  member,
+					  sZipFile);
+					continue;
+				}
+				std::error_code ec;
+				ghc::filesystem::create_directories(
+				  (ghc::filesystem::path(destRoot) / dirEntry)
+					.lexically_normal(),
+				  ec);
+				continue;
+			}
+			if (isUnsafeMemberPath(member)) {
+				Locator::getLogger()->warn(
+				  "Skipping unsafe zip entry '{}' in {}", member, sZipFile);
+				continue;
+			}
 			try {
-				fi.extract(member,
-						   FILEMAN->ResolveSongFolder(
-							 extractTo, downloadPacksToAdditionalSongs));
+				fi.extract(member, destRoot);
 				filecnt++;
 			} catch (std::exception& ex) {
 				Locator::getLogger()->error(
@@ -204,8 +306,8 @@ SongManager::InstallSmzip(const std::string& sZipFile)
 		}
 	}
 
-	auto msg = fmt::format(
-	  "Finished extracting {} files for pack {}", filecnt, doot);
+	auto msg =
+	  fmt::format("Finished extracting {} files for pack {}", filecnt, doot);
 	SCREENMAN->SystemMessage(msg);
 	return true;
 }
@@ -259,7 +361,8 @@ SongManager::DifferentialReloadDir(string dir) -> int
 			unknownGroup.songs.emplace_back(SongDir(folder));
 		} else {
 			std::vector<std::string> songdirs;
-			FILEMAN->GetDirListing(dir + folder + "/*", songdirs, ONLY_DIR, true);
+			FILEMAN->GetDirListing(
+			  dir + folder + "/*", songdirs, ONLY_DIR, true);
 			Group group(folder);
 			for (auto& song : songdirs) {
 				group.songs.emplace_back(SongDir(song));
@@ -325,8 +428,8 @@ SongManager::DifferentialReloadDir(string dir) -> int
 			continue;
 		}
 		Locator::getLogger()->info("Differential load of {} songs from \"{}\"",
-									loaded,
-									(dir + group.name).c_str());
+								   loaded,
+								   (dir + group.name).c_str());
 
 		AddGroup(dir, group.name);
 		IMAGECACHE->CacheImage("Banner",
@@ -457,7 +560,8 @@ SongManager::InitSongsFromDisk(LoadingWindow* ld)
 		  static_cast<int>(std::thread::hardware_concurrency())
 		? PREFSMAN->ThreadsToUse
 		: static_cast<int>(std::thread::hardware_concurrency());
-	Locator::getLogger()->info("InitSongsFromDisk Starting {} Threads", THREADS);
+	Locator::getLogger()->info("InitSongsFromDisk Starting {} Threads",
+							   THREADS);
 	parallelExecution<std::pair<std::pair<std::string, unsigned int>, Song*>*>(
 	  cache,
 	  onUpdate,
@@ -470,8 +574,8 @@ SongManager::InitSongsFromDisk(LoadingWindow* ld)
 	SONGINDEX->delay_save_cache = false;
 
 	Locator::getLogger()->info("InitSongsFromDisk Found {} songs in {} seconds",
-								static_cast<unsigned int>(m_pSongs.size()),
-								tm.GetDeltaTime());
+							   static_cast<unsigned int>(m_pSongs.size()),
+							   tm.GetDeltaTime());
 	for (auto& pair : cache) {
 		delete pair;
 	}
@@ -488,7 +592,7 @@ SongManager::CalcTestStuff()
 	for (const auto& p : testChartList) {
 		auto ss = p.first;
 		Locator::getLogger()->info("\nStarting calc test group {}\n",
-									SkillsetToString(ss).c_str());
+								   SkillsetToString(ss).c_str());
 		for (const auto& chart : p.second.filemapping) {
 
 			if (StepsByKey.count(chart.first) != 0u) {
@@ -604,11 +708,12 @@ void
 Playlist::UploadOnline()
 {
 	Locator::getLogger()->info(
-	  "Syncing playlist '{}' (onlineId {}) with online (uploading)...", name, onlineId);
+	  "Syncing playlist '{}' (onlineId {}) with online (uploading)...",
+	  name,
+	  onlineId);
 	if (onlineId == 0) {
 		DLMAN->AddPlaylist(name);
-	}
-	else {
+	} else {
 		DLMAN->UpdatePlaylist(name);
 	}
 }
@@ -617,7 +722,9 @@ void
 Playlist::DownloadOnline()
 {
 	Locator::getLogger()->info(
-	  "Syncing playlist '{}' (onlineId {}) with online (downloading)...", name, onlineId);
+	  "Syncing playlist '{}' (onlineId {}) with online (downloading)...",
+	  name,
+	  onlineId);
 	if (onlineId != 0)
 		DLMAN->DownloadPlaylist(name);
 	else
@@ -695,6 +802,7 @@ SongManager::MakeSongGroupsFromPlaylists(map<string, Playlist>& playlists)
 		return;
 	}
 
+	m_bGroupsSorted = false;
 	for (auto& plName : playlistGroups) {
 		groupderps.erase(plName);
 	}
@@ -849,6 +957,7 @@ SongManager::AddKeyedPointers(Song* new_song)
 	}
 
 	groupderps[new_song->m_sGroupName].emplace_back(new_song);
+	m_bGroupsSorted = false;
 }
 
 // Get a steps pointer given a chartkey, the assumption here is we want
@@ -923,7 +1032,7 @@ SongManager::AddGroup(const std::string& sDir, const std::string& sGroupDirName)
 	std::vector<std::string> exts;
 	ActorUtil::AddTypeExtensionsToList(FT_Bitmap, exts);
 	ActorUtil::AddTypeExtensionsToList(FT_Movie, exts);
-	
+
 	FILEMAN->GetDirListingWithMultipleExtensions(
 	  sDir + sGroupDirName + "/", exts, arrayGroupBanners, ONLY_FILE);
 
@@ -968,7 +1077,8 @@ SongManager::LoadStepManiaSongDir(std::string sDir, LoadingWindow* ld)
 			unknownGroup.songs.emplace_back("/" + burp);
 		} else {
 			auto group = Group(folder);
-			FILEMAN->GetDirListing(sDir + folder + "/*", group.songs, ONLY_DIR, true);
+			FILEMAN->GetDirListing(
+			  sDir + folder + "/*", group.songs, ONLY_DIR, true);
 			groups.emplace_back(group);
 		}
 	}
@@ -1008,7 +1118,8 @@ SongManager::LoadStepManiaSongDir(std::string sDir, LoadingWindow* ld)
 				data->setUpdated(true);
 			}
 			auto loaded = 0;
-			SongPointerVector& index_entry = SONGMAN->m_mapSongGroupIndex[sGroupName];
+			SongPointerVector& index_entry =
+			  SONGMAN->m_mapSongGroupIndex[sGroupName];
 			for (auto& sSongDirName : arraySongDirs) {
 				auto hur = make_lower(sSongDirName + "/");
 				if (SONGMAN->m_SongsByDir.count(hur) != 0u) {
@@ -1035,8 +1146,8 @@ SongManager::LoadStepManiaSongDir(std::string sDir, LoadingWindow* ld)
 				continue;
 			}
 			Locator::getLogger()->info("Loaded {} songs from \"{}\"",
-										loaded,
-										(sDir + sGroupName).c_str());
+									   loaded,
+									   (sDir + sGroupName).c_str());
 			{
 				std::lock_guard<std::mutex> lk(diskLoadGroupMutex);
 				SONGMAN->AddGroup(sDir, sGroupName);
@@ -1104,6 +1215,7 @@ SongManager::FreeSongs()
 	SongsByKey.clear();
 	StepsByKey.clear();
 	groupderps.clear();
+	m_bGroupsSorted = false;
 
 	m_pPopularSongs.clear();
 }
@@ -1118,8 +1230,7 @@ SongManager::UnlistSong(Song* song)
 	m_pDeletedSongs.emplace_back(song);
 
 	// remove all occurences of the song in each of our song vectors
-	vector<Song*>* songVectors[2] = { &m_pSongs,
-									  &m_pPopularSongs};
+	vector<Song*>* songVectors[2] = { &m_pSongs, &m_pPopularSongs };
 	for (int songVecIdx = 0; songVecIdx < 2; ++songVecIdx) {
 		vector<Song*>& v = *songVectors[songVecIdx];
 		for (size_t i = 0; i < v.size(); ++i) {
@@ -1128,6 +1239,11 @@ SongManager::UnlistSong(Song* song)
 				--i;
 			}
 		}
+	}
+
+	for (auto& group : groupderps) {
+		auto& v = group.second;
+		v.erase(std::remove(v.begin(), v.end(), song), v.end());
 	}
 }
 
@@ -1146,8 +1262,7 @@ SongManager::SetFavoritedStatus(std::set<string>& favs)
 			if (favs.count(steps->GetChartKey()) != 0u) {
 				fav = true;
 				steps->SetFavorited(true);
-			}
-			else {
+			} else {
 				steps->SetFavorited(false);
 			}
 		}
@@ -1164,8 +1279,7 @@ SongManager::SetPermaMirroredStatus(std::set<string>& pmir)
 			if (pmir.count(steps->GetChartKey()) != 0u) {
 				song->SetHasPermaMirrorChart(true);
 				steps->SetPermaMirror(true);
-			}
-			else {
+			} else {
 				steps->SetPermaMirror(false);
 			}
 		}
@@ -1183,8 +1297,7 @@ SongManager::SetHasGoal(std::unordered_map<string, GoalsForChart>& goalmap)
 				goalmap.at(steps->GetChartKey()).Get().size() > 0) {
 				hasGoal = true;
 				steps->SetHasGoal(true);
-			}
-			else {
+			} else {
 				steps->SetHasGoal(false);
 			}
 			song->SetHasGoal(hasGoal);
@@ -1321,6 +1434,7 @@ SongManager::ForceReloadSongGroup(const std::string& sGroupName) const
 
 		s->ReloadFromSongDir();
 		SONGMAN->ReconcileChartKeysForReloadedSong(s, oldChartkeys);
+		SONGMAN->m_bGroupsSorted = false;
 
 		s->SetHasGoal(hadGoal);
 		s->SetHasFavoritedChart(hadFavorite);
@@ -1335,8 +1449,7 @@ SongManager::ForceReloadSongGroup(const std::string& sGroupName) const
 			// this should be the new list of steps after reload
 			for (auto* steps : s->GetAllSteps()) {
 				const auto& ck = steps->GetChartKey();
-				if (goals.contains(ck) &&
-					goals.at(ck).Get().size() > 0) {
+				if (goals.contains(ck) && goals.at(ck).Get().size() > 0) {
 					steps->SetHasGoal(true);
 				} else {
 					steps->SetHasGoal(false);
@@ -1361,7 +1474,8 @@ SongManager::GenerateCachefilesForGroup(const std::string& sGroupName) const
 	const auto songsPack = songsPrefix + sGroupName + "/";
 	for (auto s : songs) {
 		// absolute, real filesystem path
-		auto sdir = FILEMAN->ResolveSongFolder(s->GetSongDir(), additionalSongs);
+		auto sdir =
+		  FILEMAN->ResolveSongFolder(s->GetSongDir(), additionalSongs);
 
 		// Save ssc/sm5 cache file
 		{
@@ -1458,7 +1572,7 @@ SongManager::GenerateCachefilesForGroup(const std::string& sGroupName) const
 				// have to rewrite the big long path to be
 				// Pack/song/stuff.sm
 				const auto internal_path =
-					thing.substr(thing.find("/" + sGroupName + "/") + 1);
+				  thing.substr(thing.find("/" + sGroupName + "/") + 1);
 				fi.write(thing, internal_path);
 			} else {
 				// path given as /pack/song/stuff.sm works fine as is
@@ -1466,11 +1580,11 @@ SongManager::GenerateCachefilesForGroup(const std::string& sGroupName) const
 			}
 		} catch (std::runtime_error& ex) {
 			Locator::getLogger()->error(
-				"Had runtime exception while writing file, skipping... Excp: "
-				"{} ; Pack {} ; Song {}",
-				ex.what(),
-				sGroupName,
-				thing);
+			  "Had runtime exception while writing file, skipping... Excp: "
+			  "{} ; Pack {} ; Song {}",
+			  ex.what(),
+			  sGroupName,
+			  thing);
 		}
 	}
 	fi.save("Cache/" + sGroupName + ".zip");
@@ -1640,6 +1754,18 @@ void
 SongManager::SortSongs()
 {
 	SongUtil::SortSongPointerArrayByTitle(m_pSongs);
+}
+
+void
+SongManager::EnsureGroupsSorted()
+{
+	if (m_bGroupsSorted) {
+		return;
+	}
+	for (auto& group : groupderps) {
+		SongUtil::SortSongPointerArrayByTitle(group.second);
+	}
+	m_bGroupsSorted = true;
 }
 
 void
@@ -1970,15 +2096,14 @@ class LunaSongManager : public Luna<SongManager>
 			pls.emplace(pl.name, pl);
 			p->activeplaylist = pl.name;
 
-			 // message for behavior consistency, not necessary
+			// message for behavior consistency, not necessary
 			MESSAGEMAN->Broadcast("DisplayAllPlaylists");
 
 			lua_pushboolean(L, true);
-		}
-		else {
+		} else {
 			lua_pushboolean(L, false);
 		}
-		
+
 		return 1;
 	}
 
