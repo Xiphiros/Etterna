@@ -203,7 +203,8 @@ MusicWheelItem::LoadFromWheelItemData(const WheelItemBaseData* pData,
 				type = MusicWheelItemType_SectionCollapsed;
 			}
 
-			auto plays_by_group = wheel->packProgressByGroup.at(GAMESTATE->m_SortOrder);
+			const auto& plays_by_group =
+			  wheel->packProgressByGroup.at(GAMESTATE->m_SortOrder);
 			auto plays_in_group = plays_by_group.find(pWID->m_sText);
 			if (PREFSMAN->m_bPackProgressInWheel && plays_in_group != plays_by_group.end()) {
 				int num_played_songs = plays_in_group->second;
