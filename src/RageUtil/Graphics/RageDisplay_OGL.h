@@ -8,6 +8,8 @@
 #include "Etterna/Actor/Base/Sprite.h"
 #include "RageUtil/Graphics/RageTextureRenderTarget.h"
 
+#include <unordered_map>
+
 /* Making an OpenGL call doesn't also flush the error state; if we happen
  * to have an error from a previous call, then the assert below will fail.
  * Flush it. */
@@ -29,8 +31,20 @@
 	}
 
 #if defined(DEBUG) || !defined(GL_GET_ERROR_IS_SLOW)
-#define DebugFlushGLErrors() FlushGLErrors()
-#define DebugAssertNoGLError() AssertNoGLError()
+#define DebugFlushGLErrors()                                                   \
+	do {                                                                       \
+		if (unlikely(DISPLAY != nullptr &&                                     \
+					 DISPLAY->DisplayDebugModeEnabled())) {                    \
+			FlushGLErrors();                                                   \
+		}                                                                      \
+	} while (false)
+#define DebugAssertNoGLError()                                                 \
+	do {                                                                       \
+		if (unlikely(DISPLAY != nullptr &&                                     \
+					 DISPLAY->DisplayDebugModeEnabled())) {                    \
+			AssertNoGLError();                                                 \
+		}                                                                      \
+	} while (false)
 #else
 #define DebugFlushGLErrors()
 #define DebugAssertNoGLError()
@@ -88,6 +102,7 @@ class RageDisplay_Legacy : public RageDisplay
 	bool IsEffectModeSupported(EffectMode effect) override;
 	bool SupportsRenderToTexture() const override;
 	bool SupportsFullscreenBorderlessWindow() const override;
+	bool SupportsNonPowerOfTwoTextures() const override;
 	intptr_t CreateRenderTarget(const RenderTargetParam& param,
 								int& iTextureWidthOut,
 								int& iTextureHeightOut) override;
@@ -128,6 +143,18 @@ class RageDisplay_Legacy : public RageDisplay
 
 	std::string GetTextureDiagnostics(unsigned id) const override;
 	void OnContextInvalidated();
+	[[nodiscard]] auto IsLightingEnabled() const -> bool
+	{
+		return m_bCachedLighting;
+	}
+	[[nodiscard]] auto IsSphereEnvironmentMappingEnabled() const -> bool
+	{
+		return m_uSphereMapMask != 0;
+	}
+	[[nodiscard]] auto IsCelShadedEnabled() const -> bool
+	{
+		return m_iCelShadedStage != 0;
+	}
 
   protected:
 	void OnBenchBeginPhase(bool bIsWarmup) override;
@@ -161,9 +188,85 @@ class RageDisplay_Legacy : public RageDisplay
 	void SendCurrentMatrices();
 
   private:
+	void InvalidateStateCache(bool bFlushBatch = true,
+							  bool bResetContextDefaults = false);
+	void FlushQuadBatch();
+	auto SetTextureUnit(TextureUnit tu) -> bool;
+	void SetupVertices(const RageSpriteVertex v[], int iNumVerts);
 	void HarvestAvailableGpuQueries();
 	void DrainAllGpuQueries();
 	auto CaptureBenchScreenshot(const std::string& sVfsPngPath) -> bool;
+
+	struct OGLTexInfo
+	{
+		int iWidth{ 0 };
+		int iHeight{ 0 };
+		unsigned int glInternalFormat{ 0 };
+		bool bHasMipMaps{ false };
+		int minFilter{ 0 };
+		int magFilter{ 0 };
+		int wrapS{ 0 };
+		int wrapT{ 0 };
+	};
+	std::unordered_map<unsigned int, OGLTexInfo> m_mapTexInfo;
+	mutable int m_iMaxTextureSize{ 0 };
+
+	int m_iActiveTexUnit{ -1 };
+	unsigned int m_auBoundTex[NUM_TextureUnit]{};
+	bool m_abTex2DEnabled[NUM_TextureUnit]{};
+	bool m_abTexUnitStateValid[NUM_TextureUnit]{};
+	uint32_t m_uEnabledTexUnitMask{ 0 };
+	TextureMode m_aCachedTexMode[NUM_TextureUnit]{};
+	bool m_abTexModeValid[NUM_TextureUnit]{};
+	EffectMode m_CachedEffectMode{ EffectMode_Normal };
+	int m_iCachedEffectTexWidth{ -1 };
+	bool m_bEffectModeValid{ false };
+	BlendMode m_CachedBlendMode{ BLEND_NORMAL };
+	bool m_bBlendModeValid{ false };
+	bool m_bCachedZWrite{ false };
+	bool m_bZWriteValid{ false };
+	ZTestMode m_CachedZTestMode{ ZTEST_OFF };
+	bool m_bZTestValid{ false };
+	float m_fCachedZBias{ 0.0f };
+	bool m_bZBiasValid{ false };
+	CullMode m_CachedCullMode{ CULL_NONE };
+	bool m_bCullModeValid{ false };
+	bool m_bCachedAlphaTest{ false };
+	bool m_bAlphaTestValid{ false };
+	bool m_bCachedLighting{ false };
+	bool m_bLightingValid{ false };
+	uint32_t m_uSphereMapMask{ 0 };
+	int m_iCelShadedStage{ 0 };
+	PolygonMode m_CachedPolygonMode{ POLYGON_FILL };
+	bool m_bPolygonModeValid{ false };
+
+	bool m_bClientVertexEnabled{ false };
+	bool m_bClientColorEnabled{ false };
+	bool m_bClientTex0Enabled{ false };
+	bool m_bClientTex1Enabled{ true };
+	bool m_bClientNormalEnabled{ true };
+	std::vector<uint8_t> m_vFallbackRGBA;
+
+	uint64_t m_uUploadedCenteringRev{ 0 };
+	uint64_t m_uUploadedProjRev{ 0 };
+	bool m_bUploadedInvertY{ false };
+	bool m_bProjUploadValid{ false };
+	uint64_t m_uUploadedViewRev{ 0 };
+	uint64_t m_uUploadedWorldRev{ 0 };
+	bool m_bModelViewIsIdentity{ false };
+	bool m_bModelViewUploadValid{ false };
+	uint64_t m_uUploadedTexRev{ 0 };
+	bool m_bTexMatrixUploadedIsIdentity{ false };
+	bool m_bTexUploadValid{ false };
+
+	static constexpr size_t kMaxQuadBatchQuads = 2048;
+	static constexpr size_t kMaxQuadBatchVerts = kMaxQuadBatchQuads * 4;
+	std::vector<RageSpriteVertex> m_vQuadBatch;
+	std::vector<uint16_t> m_vQuadIndices;
+	RageMatrix m_QuadBatchProjection{};
+	uint64_t m_uQuadBatchCenteringRev{ 0 };
+	uint64_t m_uQuadBatchProjRev{ 0 };
+	bool m_bQuadBatchInvertY{ false };
 
 	static constexpr size_t kGpuTimerRingSize = 8;
 	unsigned int m_aGpuTimerQueries[kGpuTimerRingSize]{};
