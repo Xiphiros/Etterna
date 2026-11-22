@@ -837,6 +837,7 @@ ScreenGameplay::UpdateSongPosition()
 void
 ScreenGameplay::BeginScreen()
 {
+	m_bSongPosUpdatedForInput = false;
 	if (GAMESTATE->m_pCurSong == nullptr) {
 		return;
 	}
@@ -983,9 +984,19 @@ ScreenGameplay::TriggerDiscordRPCUpdate()
 }
 
 void
+ScreenGameplay::UpdateBeforeInput()
+{
+	if (GAMESTATE->m_pCurSong != nullptr && !IsFirstUpdate()) {
+		UpdateSongPosition();
+		m_bSongPosUpdatedForInput = true;
+	}
+}
+
+void
 ScreenGameplay::Update(float fDeltaTime)
 {
 	if (GAMESTATE->m_pCurSong == nullptr) {
+		m_bSongPosUpdatedForInput = false;
 		/* ScreenDemonstration will move us to the next screen.  We just need to
 		 * survive for one update without crashing.  We need to call
 		 * Screen::Update to make sure we receive the next-screen message. */
@@ -993,7 +1004,10 @@ ScreenGameplay::Update(float fDeltaTime)
 		return;
 	}
 
-	UpdateSongPosition();
+	if (!m_bSongPosUpdatedForInput) {
+		UpdateSongPosition();
+	}
+	m_bSongPosUpdatedForInput = false;
 
 	if (m_bZeroDeltaOnNextUpdate) {
 		ScreenWithMenuElements::Update(0);
