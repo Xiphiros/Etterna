@@ -32,6 +32,7 @@ class ScreenGameplay : public ScreenWithMenuElements
 	void BeginScreen() override;
 
 	void Update(float fDeltaTime) override;
+	void UpdateBeforeInput() override;
 	bool Input(const InputEventPlus& input) override;
 	void HandleScreenMessage(const ScreenMessage& SM) override;
 	void HandleMessage(const Message& msg) override;
@@ -188,5 +189,6 @@ class ScreenGameplay : public ScreenWithMenuElements
 
 	// True when the player hit RestartGameplay
 	bool m_bRestarted = false;
+	bool m_bSongPosUpdatedForInput{ false };
 };
 #endif
