@@ -82,6 +82,13 @@ SupportsGpuTimerQuery() -> bool
 }
 
 inline auto
+SupportsFenceSync() -> bool
+{
+	return GLEW_ARB_sync && glFenceSync != nullptr &&
+		   glClientWaitSync != nullptr && glDeleteSync != nullptr;
+}
+
+inline auto
 ReadGpuQueryUs(GLuint uQuery) -> double
 {
 	if (GLEW_ARB_timer_query && glGetQueryObjectui64v != nullptr) {
@@ -703,6 +710,7 @@ RageDisplay_Legacy::~RageDisplay_Legacy()
 		glDeleteQueries(kGpuTimerRingSize, m_aGpuTimerQueries);
 		m_bGpuTimerQueriesInitialized = false;
 	}
+	DestroyFrameFences(true);
 	delete g_pWind;
 }
 
@@ -1056,6 +1064,7 @@ RageDisplay_Legacy::OnContextInvalidated()
 	m_mapTexInfo.clear();
 	m_iMaxTextureSize = 0;
 	InvalidateStateCache(false, true);
+	DestroyFrameFences(false);
 	// Context recreation destroys GL objects owned by the previous context;
 	// pad unharvested slots so gpu_us remains index-aligned with frame_us.
 	for (size_t i = 0; i < m_uGpuRingCount; ++i) {
@@ -1067,6 +1076,38 @@ RageDisplay_Legacy::OnContextInvalidated()
 	m_uGpuRingTail = 0;
 	m_uGpuRingCount = 0;
 	m_bGpuQueryActive = false;
+}
+
+void
+RageDisplay_Legacy::DestroyFrameFences(bool bDeleteGLObjects)
+{
+	if (bDeleteGLObjects && glDeleteSync != nullptr) {
+		for (GLsync& fence : m_aFrameFences) {
+			if (fence != nullptr) {
+				glDeleteSync(fence);
+			}
+		}
+	}
+	m_aFrameFences.fill(nullptr);
+	m_uFenceWriteIdx = 0;
+}
+
+void
+RageDisplay_Legacy::WaitForGpuFrameSlot()
+{
+	if (IsBenchEnabled()) {
+		return;
+	}
+	GLsync& fence = m_aFrameFences[m_uFenceWriteIdx];
+	if (fence != nullptr) {
+		if (glClientWaitSync != nullptr) {
+			glClientWaitSync(fence, GL_SYNC_FLUSH_COMMANDS_BIT, 50000000ULL);
+		}
+		if (glDeleteSync != nullptr) {
+			glDeleteSync(fence);
+		}
+		fence = nullptr;
+	}
 }
 
 void
@@ -1239,6 +1280,14 @@ RageDisplay_Legacy::EndFrame()
 	FrameLimitBeforeVsync();
 	const auto beforePresent = std::chrono::steady_clock::now();
 	g_pWind->SwapBuffers();
+	if (!IsBenchEnabled() && SupportsFenceSync()) {
+		if (m_aFrameFences[m_uFenceWriteIdx] != nullptr) {
+			glDeleteSync(m_aFrameFences[m_uFenceWriteIdx]);
+		}
+		m_aFrameFences[m_uFenceWriteIdx] =
+		  glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+		m_uFenceWriteIdx ^= 1U;
+	}
 	glFlush();
 
 	const auto afterPresent = std::chrono::steady_clock::now();
