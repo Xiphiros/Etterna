@@ -181,6 +181,9 @@ RageBitmapTexture::Create()
 	/* image size cannot exceed max size */
 	m_iImageWidth = min(m_iImageWidth, actualID.iMaxSize);
 	m_iImageHeight = min(m_iImageHeight, actualID.iMaxSize);
+	const uint64_t uSourceWidth = static_cast<uint64_t>(max(0, m_iImageWidth));
+	const uint64_t uSourceHeight =
+	  static_cast<uint64_t>(max(0, m_iImageHeight));
 
 	/* Texture dimensions need to be a power of two; jump to the next. */
 	m_iTextureWidth = power_of_two(m_iImageWidth);
@@ -302,6 +305,17 @@ RageBitmapTexture::Create()
 									 pfd->masks[3]);
 
 	m_uTexHandle = DISPLAY->CreateTexture(pixfmt, pImg, actualID.bMipMaps);
+	if (unlikely(DISPLAY->IsBenchRecording())) {
+		const uint64_t uBytesPerPixel = static_cast<uint64_t>(pfd->bpp / 8);
+		const uint64_t uTexPixels = static_cast<uint64_t>(m_iTextureWidth) *
+									static_cast<uint64_t>(m_iTextureHeight);
+		const uint64_t uSourcePixels = uSourceWidth * uSourceHeight;
+		const uint64_t uTotalBytes = uTexPixels * uBytesPerPixel;
+		const uint64_t uPaddedBytes =
+		  (uTexPixels >= uSourcePixels ? (uTexPixels - uSourcePixels) : 0ULL) *
+		  uBytesPerPixel;
+		DISPLAY->BenchRecordTextureUpload(uTotalBytes, uPaddedBytes);
+	}
 
 	CreateFrameRects();
 
