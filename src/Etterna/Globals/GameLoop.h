@@ -16,6 +16,8 @@ namespace GameLoop {
     void ChangeGame(const std::string& new_game, const std::string& new_theme = "");
     void RunGameLoop();
 	void loadSavedLayout();
+	void
+	SetConstantUpdateDeltaSeconds(float fDeltaSeconds);
 	};
 
 #endif
