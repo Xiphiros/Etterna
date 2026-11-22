@@ -3,9 +3,15 @@
 
 #include "Etterna/Singletons/InputFilter.h"
 
+#include <atomic>
+
 #define DIRECTINPUT_VERSION 0x0800
 #include <dinput.h>
 extern LPDIRECTINPUT8 g_dinput;
+extern std::atomic<bool> g_bWin32RawInputActive;
+
+int
+ConvertWin32ScancodeToKey(int scancode);
 
 #define INPUT_QSIZE 32
 
