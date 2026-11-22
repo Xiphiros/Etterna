@@ -216,9 +216,14 @@ MovieTexture_Generic::CreateTexture()
 	m_iImageWidth = m_iSourceWidth;
 	m_iImageHeight = m_iSourceHeight;
 
-	/* Texture dimensions need to be a power of two; jump to the next. */
-	m_iTextureWidth = power_of_two(m_iImageWidth);
-	m_iTextureHeight = power_of_two(m_iImageHeight);
+	if (DISPLAY->SupportsNonPowerOfTwoTextures()) {
+		m_iTextureWidth = std::max(1, m_iImageWidth);
+		m_iTextureHeight = std::max(1, m_iImageHeight);
+	} else {
+		/* Texture dimensions need to be a power of two; jump to the next. */
+		m_iTextureWidth = power_of_two(m_iImageWidth);
+		m_iTextureHeight = power_of_two(m_iImageHeight);
+	}
 	MovieDecoderPixelFormatYCbCr fmt = PixelFormatYCbCr_Invalid;
 	if (m_pSurface == NULL) {
 		ASSERT(m_pTextureLock == NULL);
@@ -289,16 +294,17 @@ MovieTexture_Generic::CreateTexture()
 		RageTextureID IntermedID(GetID());
 		IntermedID.filename += " intermediate";
 
-		m_pTextureIntermediate =
-		  new RageMovieTexture_Generic_Intermediate(IntermedID,
-													m_pDecoder->GetWidth(),
-													m_pDecoder->GetHeight(),
-													m_pSurface->w,
-													m_pSurface->h,
-													power_of_two(m_pSurface->w),
-													power_of_two(m_pSurface->h),
-													m_pSurface->fmt,
-													pixfmt);
+		const bool bNPOT = DISPLAY->SupportsNonPowerOfTwoTextures();
+		m_pTextureIntermediate = new RageMovieTexture_Generic_Intermediate(
+		  IntermedID,
+		  m_pDecoder->GetWidth(),
+		  m_pDecoder->GetHeight(),
+		  m_pSurface->w,
+		  m_pSurface->h,
+		  bNPOT ? std::max(1, m_pSurface->w) : power_of_two(m_pSurface->w),
+		  bNPOT ? std::max(1, m_pSurface->h) : power_of_two(m_pSurface->h),
+		  m_pSurface->fmt,
+		  pixfmt);
 
 		/* Configure the sprite.  This blits the intermediate onto the ifnal
 		 * render target. */
