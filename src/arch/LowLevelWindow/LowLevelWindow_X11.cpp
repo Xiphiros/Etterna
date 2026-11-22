@@ -680,24 +680,22 @@ LowLevelWindow_X11::TryVideoMode(const VideoModeParams& p, bool& bNewDeviceOut)
 	ASSERT(rate > 0);
 	CurrentParams.rate = static_cast<int>(roundf(rate));
 
-	if (!p.windowed) {
-		// Set our V-sync hint.
-		if (GLXEW_EXT_swap_control) // I haven't seen this actually implemented
-									// yet, but why not.
-			glXSwapIntervalEXT(Dpy, Win, CurrentParams.vsync ? 1 : 0);
-			// XXX: These two might be server-global. I should look into whether
-			// to try to preserve the original value on exit.
+	// Set our V-sync hint.
+	if (GLXEW_EXT_swap_control) // I haven't seen this actually implemented
+								// yet, but why not.
+		glXSwapIntervalEXT(Dpy, Win, CurrentParams.vsync ? 1 : 0);
+	// XXX: These two might be server-global. I should look into whether
+	// to try to preserve the original value on exit.
 #ifdef GLXEW_MESA_swap_control // Added in 1.7. 1.6 is still common out there
 							   // apparently.
-		else if (GLXEW_MESA_swap_control) // Haven't seen this NOT implemented
-										  // yet
-			glXSwapIntervalMESA(CurrentParams.vsync ? 1 : 0);
+	else if (GLXEW_MESA_swap_control) // Haven't seen this NOT implemented
+									  // yet
+		glXSwapIntervalMESA(CurrentParams.vsync ? 1 : 0);
 #endif
-		else if (GLXEW_SGI_swap_control) // But old GLEW.
-			glXSwapIntervalSGI(CurrentParams.vsync ? 1 : 0);
-		else
-			CurrentParams.vsync = false; // Assuming it's not on
-	}
+	else if (GLXEW_SGI_swap_control) // But old GLEW.
+		glXSwapIntervalSGI(CurrentParams.vsync ? 1 : 0);
+	else
+		CurrentParams.vsync = false; // Assuming it's not on
 
 	return ""; // Success
 }
