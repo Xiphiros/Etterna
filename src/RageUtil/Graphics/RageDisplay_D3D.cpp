@@ -18,7 +18,6 @@
 #include <list>
 #include <chrono>
 
-
 #if defined(__clang__)
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wnew-returns-null"
@@ -35,108 +34,114 @@
 #if defined(_MSC_VER)
 #pragma comment(lib, "d3d9.lib")
 #pragma comment(lib, "d3dx9.lib")
+#pragma comment(lib, "dxguid.lib")
 #endif
 
-
-// The DXGetErrorStringW function comes from the DirectX Error Library  (See https://walbourn.github.io/wheres-dxerr-lib/ )
+// The DXGetErrorStringW function comes from the DirectX Error Library  (See
+// https://walbourn.github.io/wheres-dxerr-lib/ )
 //--------------------------------------------------------------------------------------
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 //--------------------------------------------------------------------------------------
-const WCHAR* WINAPI DXGetErrorStringW( _In_ HRESULT hr )
+const WCHAR* WINAPI
+DXGetErrorStringW(_In_ HRESULT hr)
 {
-#define  CHK_ERRA(hrchk) \
-        case hrchk: \
-             return L## #hrchk;
+#define CHK_ERRA(hrchk)                                                        \
+	case hrchk:                                                                \
+		return L## #hrchk;
 
-#define HRESULT_FROM_WIN32b(x) ((HRESULT)(x) <= 0 ? ((HRESULT)(x)) : ((HRESULT) (((x) & 0x0000FFFF) | (FACILITY_WIN32 << 16) | 0x80000000)))
+#define HRESULT_FROM_WIN32b(x)                                                 \
+	((HRESULT)(x) <= 0 ? ((HRESULT)(x))                                        \
+					   : ((HRESULT)(((x) & 0x0000FFFF) |                       \
+									(FACILITY_WIN32 << 16) | 0x80000000)))
 
-#define  CHK_ERR_WIN32A(hrchk) \
-        case HRESULT_FROM_WIN32b(hrchk): \
-        case hrchk: \
-             return L## #hrchk;
+#define CHK_ERR_WIN32A(hrchk)                                                  \
+	case HRESULT_FROM_WIN32b(hrchk):                                           \
+	case hrchk:                                                                \
+		return L## #hrchk;
 
-   switch(hr)
-   {
-// Common Win32 error codes
-        CHK_ERRA(S_OK)
-        CHK_ERRA(S_FALSE)
+	switch (hr) {
+		// Common Win32 error codes
+		CHK_ERRA(S_OK)
+		CHK_ERRA(S_FALSE)
 
-// d3d9.h error codes
-//      CHK_ERRA(D3D_OK)
-        CHK_ERRA(D3DERR_WRONGTEXTUREFORMAT)
-        CHK_ERRA(D3DERR_UNSUPPORTEDCOLOROPERATION)
-        CHK_ERRA(D3DERR_UNSUPPORTEDCOLORARG)
-        CHK_ERRA(D3DERR_UNSUPPORTEDALPHAOPERATION)
-        CHK_ERRA(D3DERR_UNSUPPORTEDALPHAARG)
-        CHK_ERRA(D3DERR_TOOMANYOPERATIONS)
-        CHK_ERRA(D3DERR_CONFLICTINGTEXTUREFILTER)
-        CHK_ERRA(D3DERR_UNSUPPORTEDFACTORVALUE)
-        CHK_ERRA(D3DERR_CONFLICTINGRENDERSTATE)
-        CHK_ERRA(D3DERR_UNSUPPORTEDTEXTUREFILTER)
-        CHK_ERRA(D3DERR_CONFLICTINGTEXTUREPALETTE)
-        CHK_ERRA(D3DERR_DRIVERINTERNALERROR)
-        CHK_ERRA(D3DERR_NOTFOUND)
-        CHK_ERRA(D3DERR_MOREDATA)
-        CHK_ERRA(D3DERR_DEVICELOST)
-        CHK_ERRA(D3DERR_DEVICENOTRESET)
-        CHK_ERRA(D3DERR_NOTAVAILABLE)
-        CHK_ERRA(D3DERR_OUTOFVIDEOMEMORY)
-        CHK_ERRA(D3DERR_INVALIDDEVICE)
-        CHK_ERRA(D3DERR_INVALIDCALL)
-        CHK_ERRA(D3DERR_DRIVERINVALIDCALL)
-        //CHK_ERRA(D3DERR_WASSTILLDRAWING)
-        CHK_ERRA(D3DOK_NOAUTOGEN)
+		// d3d9.h error codes
+		//      CHK_ERRA(D3D_OK)
+		CHK_ERRA(D3DERR_WRONGTEXTUREFORMAT)
+		CHK_ERRA(D3DERR_UNSUPPORTEDCOLOROPERATION)
+		CHK_ERRA(D3DERR_UNSUPPORTEDCOLORARG)
+		CHK_ERRA(D3DERR_UNSUPPORTEDALPHAOPERATION)
+		CHK_ERRA(D3DERR_UNSUPPORTEDALPHAARG)
+		CHK_ERRA(D3DERR_TOOMANYOPERATIONS)
+		CHK_ERRA(D3DERR_CONFLICTINGTEXTUREFILTER)
+		CHK_ERRA(D3DERR_UNSUPPORTEDFACTORVALUE)
+		CHK_ERRA(D3DERR_CONFLICTINGRENDERSTATE)
+		CHK_ERRA(D3DERR_UNSUPPORTEDTEXTUREFILTER)
+		CHK_ERRA(D3DERR_CONFLICTINGTEXTUREPALETTE)
+		CHK_ERRA(D3DERR_DRIVERINTERNALERROR)
+		CHK_ERRA(D3DERR_NOTFOUND)
+		CHK_ERRA(D3DERR_MOREDATA)
+		CHK_ERRA(D3DERR_DEVICELOST)
+		CHK_ERRA(D3DERR_DEVICENOTRESET)
+		CHK_ERRA(D3DERR_NOTAVAILABLE)
+		CHK_ERRA(D3DERR_OUTOFVIDEOMEMORY)
+		CHK_ERRA(D3DERR_INVALIDDEVICE)
+		CHK_ERRA(D3DERR_INVALIDCALL)
+		CHK_ERRA(D3DERR_DRIVERINVALIDCALL)
+		// CHK_ERRA(D3DERR_WASSTILLDRAWING)
+		CHK_ERRA(D3DOK_NOAUTOGEN)
 
-	    // Extended for Windows Vista
-	    CHK_ERRA(D3DERR_DEVICEREMOVED)
-	    CHK_ERRA(S_NOT_RESIDENT)
-	    CHK_ERRA(S_RESIDENT_IN_SHARED_MEMORY)
-	    CHK_ERRA(S_PRESENT_MODE_CHANGED)
-	    CHK_ERRA(S_PRESENT_OCCLUDED)
-	    CHK_ERRA(D3DERR_DEVICEHUNG)
+		// Extended for Windows Vista
+		CHK_ERRA(D3DERR_DEVICEREMOVED)
+		CHK_ERRA(S_NOT_RESIDENT)
+		CHK_ERRA(S_RESIDENT_IN_SHARED_MEMORY)
+		CHK_ERRA(S_PRESENT_MODE_CHANGED)
+		CHK_ERRA(S_PRESENT_OCCLUDED)
+		CHK_ERRA(D3DERR_DEVICEHUNG)
 
-        // Extended for Windows 7
-        CHK_ERRA(D3DERR_UNSUPPORTEDOVERLAY)
-        CHK_ERRA(D3DERR_UNSUPPORTEDOVERLAYFORMAT)
-        CHK_ERRA(D3DERR_CANNOTPROTECTCONTENT)
-        CHK_ERRA(D3DERR_UNSUPPORTEDCRYPTO)
-        CHK_ERRA(D3DERR_PRESENT_STATISTICS_DISJOINT)
+		// Extended for Windows 7
+		CHK_ERRA(D3DERR_UNSUPPORTEDOVERLAY)
+		CHK_ERRA(D3DERR_UNSUPPORTEDOVERLAYFORMAT)
+		CHK_ERRA(D3DERR_CANNOTPROTECTCONTENT)
+		CHK_ERRA(D3DERR_UNSUPPORTEDCRYPTO)
+		CHK_ERRA(D3DERR_PRESENT_STATISTICS_DISJOINT)
 
-// dxgi.h error codes
-        CHK_ERRA(DXGI_STATUS_OCCLUDED)
-        CHK_ERRA(DXGI_STATUS_CLIPPED)
-        CHK_ERRA(DXGI_STATUS_NO_REDIRECTION)
-        CHK_ERRA(DXGI_STATUS_NO_DESKTOP_ACCESS)
-        CHK_ERRA(DXGI_STATUS_GRAPHICS_VIDPN_SOURCE_IN_USE)
-        CHK_ERRA(DXGI_STATUS_MODE_CHANGED)
-        CHK_ERRA(DXGI_STATUS_MODE_CHANGE_IN_PROGRESS)
-        CHK_ERRA(DXGI_ERROR_INVALID_CALL)
-        CHK_ERRA(DXGI_ERROR_NOT_FOUND)
-        CHK_ERRA(DXGI_ERROR_MORE_DATA)
-        CHK_ERRA(DXGI_ERROR_UNSUPPORTED)
-        CHK_ERRA(DXGI_ERROR_DEVICE_REMOVED)
-        CHK_ERRA(DXGI_ERROR_DEVICE_HUNG)
-        CHK_ERRA(DXGI_ERROR_DEVICE_RESET)
-        CHK_ERRA(DXGI_ERROR_WAS_STILL_DRAWING)
-        CHK_ERRA(DXGI_ERROR_FRAME_STATISTICS_DISJOINT)
-        CHK_ERRA(DXGI_ERROR_GRAPHICS_VIDPN_SOURCE_IN_USE)
-        CHK_ERRA(DXGI_ERROR_DRIVER_INTERNAL_ERROR)
-        CHK_ERRA(DXGI_ERROR_NONEXCLUSIVE)
-        CHK_ERRA(DXGI_ERROR_NOT_CURRENTLY_AVAILABLE)
-        CHK_ERRA(DXGI_ERROR_REMOTE_CLIENT_DISCONNECTED)
-        CHK_ERRA(DXGI_ERROR_REMOTE_OUTOFMEMORY)
+		// dxgi.h error codes
+		CHK_ERRA(DXGI_STATUS_OCCLUDED)
+		CHK_ERRA(DXGI_STATUS_CLIPPED)
+		CHK_ERRA(DXGI_STATUS_NO_REDIRECTION)
+		CHK_ERRA(DXGI_STATUS_NO_DESKTOP_ACCESS)
+		CHK_ERRA(DXGI_STATUS_GRAPHICS_VIDPN_SOURCE_IN_USE)
+		CHK_ERRA(DXGI_STATUS_MODE_CHANGED)
+		CHK_ERRA(DXGI_STATUS_MODE_CHANGE_IN_PROGRESS)
+		CHK_ERRA(DXGI_ERROR_INVALID_CALL)
+		CHK_ERRA(DXGI_ERROR_NOT_FOUND)
+		CHK_ERRA(DXGI_ERROR_MORE_DATA)
+		CHK_ERRA(DXGI_ERROR_UNSUPPORTED)
+		CHK_ERRA(DXGI_ERROR_DEVICE_REMOVED)
+		CHK_ERRA(DXGI_ERROR_DEVICE_HUNG)
+		CHK_ERRA(DXGI_ERROR_DEVICE_RESET)
+		CHK_ERRA(DXGI_ERROR_WAS_STILL_DRAWING)
+		CHK_ERRA(DXGI_ERROR_FRAME_STATISTICS_DISJOINT)
+		CHK_ERRA(DXGI_ERROR_GRAPHICS_VIDPN_SOURCE_IN_USE)
+		CHK_ERRA(DXGI_ERROR_DRIVER_INTERNAL_ERROR)
+		CHK_ERRA(DXGI_ERROR_NONEXCLUSIVE)
+		CHK_ERRA(DXGI_ERROR_NOT_CURRENTLY_AVAILABLE)
+		CHK_ERRA(DXGI_ERROR_REMOTE_CLIENT_DISCONNECTED)
+		CHK_ERRA(DXGI_ERROR_REMOTE_OUTOFMEMORY)
 
-        default: return L"Unknown error.";
-    }
+		default:
+			return L"Unknown error.";
+	}
 }
 
-auto GetErrorString(HRESULT hr) -> std::string
+auto
+GetErrorString(HRESULT hr) -> std::string
 {
 	Locator::getLogger()->warn("RageDisplay_D3D::GetErrorString() - HR {}",
 							   static_cast<long>(hr));
-    const wchar_t* msg = DXGetErrorStringW(hr);
-    if (msg) {
+	const wchar_t* msg = DXGetErrorStringW(hr);
+	if (msg) {
 		auto r = WStringToString(std::wstring(msg));
 		if (r.compare("Unknown error.") == 0) {
 			return fmt::format("Unknown error: HR {}", static_cast<long>(hr));
@@ -191,7 +196,7 @@ std::map<intptr_t, TexturePalette> g_TexResourceToTexturePalette;
 // Load the palette, if any, for the given texture into a palette slot, and make
 // it current.
 static void
-SetPalette(unsigned TexResource)
+SetPalette(intptr_t TexResource)
 {
 	// If the texture isn't paletted, we have nothing to do.
 	if (g_TexResourceToTexturePalette.find(TexResource) ==
@@ -346,15 +351,21 @@ RageDisplay_D3D::Init(VideoModeParams&& p,
 	  g_DeviceCaps.MaxTextureWidth,
 	  (g_DeviceCaps.TextureCaps & D3DPTEXTURECAPS_ALPHAPALETTE) ? "yes" : "no");
 
-	Locator::getLogger()->info("This display adaptor supports the following modes:");
+	Locator::getLogger()->info(
+	  "This display adaptor supports the following modes:");
 	D3DDISPLAYMODE mode;
 
 	const auto modeCount =
 	  g_pd3d->GetAdapterModeCount(D3DADAPTER_DEFAULT, g_DefaultAdapterFormat);
 
 	for (UINT u = 0; u < modeCount; u++) {
-		if (SUCCEEDED(g_pd3d->EnumAdapterModes(D3DADAPTER_DEFAULT, g_DefaultAdapterFormat, u, &mode))) {
-			Locator::getLogger()->info("  {}x{} {}Hz, format {}", mode.Width, mode.Height, mode.RefreshRate, static_cast<int>(mode.Format));
+		if (SUCCEEDED(g_pd3d->EnumAdapterModes(
+			  D3DADAPTER_DEFAULT, g_DefaultAdapterFormat, u, &mode))) {
+			Locator::getLogger()->info("  {}x{} {}Hz, format {}",
+									   mode.Width,
+									   mode.Height,
+									   mode.RefreshRate,
+									   static_cast<int>(mode.Format));
 		}
 	}
 
@@ -424,7 +435,8 @@ RageDisplay_D3D::GetDisplaySpecs(DisplaySpecs& out) const
 		const RectI bounds(0, 0, active.width, active.height);
 		out.insert(DisplaySpec("", "Fullscreen", modes, active, bounds));
 	} else {
-		Locator::getLogger()->warn("Could not find active mode for default D3D adapter");
+		Locator::getLogger()->warn(
+		  "Could not find active mode for default D3D adapter");
 		if (!modes.empty()) {
 			const auto& m = *modes.begin();
 			const RectI bounds(0, 0, m.width, m.height);
@@ -439,7 +451,8 @@ FindBackBufferType(bool bWindowed, int iBPP) -> D3DFORMAT
 	HRESULT hr;
 
 	// If windowed, then bpp is ignored.  Use whatever works.
-	std::vector<D3DFORMAT> vBackBufferFormats; // throw all possibilities in here
+	std::vector<D3DFORMAT>
+	  vBackBufferFormats; // throw all possibilities in here
 
 	// When windowed, add all formats; otherwise add only formats that match
 	// dwBPP.
@@ -470,10 +483,11 @@ FindBackBufferType(bool bWindowed, int iBPP) -> D3DFORMAT
 			fmtDisplay = vBackBufferFormat;
 		}
 
-		Locator::getLogger()->debug("Testing format: display {}, back buffer {}, windowed {}...",
-				   static_cast<int>(fmtDisplay),
-				   static_cast<int>(fmtBackBuffer),
-				   static_cast<int>(bWindowed));
+		Locator::getLogger()->debug(
+		  "Testing format: display {}, back buffer {}, windowed {}...",
+		  static_cast<int>(fmtDisplay),
+		  static_cast<int>(fmtBackBuffer),
+		  static_cast<int>(bWindowed));
 
 		hr = g_pd3d->CheckDeviceType(D3DADAPTER_DEFAULT,
 									 D3DDEVTYPE_HAL,
@@ -490,7 +504,8 @@ FindBackBufferType(bool bWindowed, int iBPP) -> D3DFORMAT
 		return fmtBackBuffer;
 	}
 
-	Locator::getLogger()->warn("Couldn't find an appropriate back buffer format.");
+	Locator::getLogger()->warn(
+	  "Couldn't find an appropriate back buffer format.");
 	return D3DFMT_UNKNOWN;
 }
 
@@ -519,6 +534,13 @@ SetD3DParams(bool& bNewDeviceOut) -> std::string
 			// this video mode.
 			return ssprintf("CreateDevice failed: '%s'",
 							GetErrorString(hr).c_str());
+		}
+		IDirect3DDevice9Ex* pDevEx = nullptr;
+		if (SUCCEEDED(g_pd3dDevice->QueryInterface(
+			  IID_IDirect3DDevice9Ex, reinterpret_cast<void**>(&pDevEx))) &&
+			pDevEx != nullptr) {
+			pDevEx->SetMaximumFrameLatency(1);
+			pDevEx->Release();
 		}
 	} else {
 		bNewDeviceOut = false;
@@ -555,8 +577,10 @@ D3DReduceParams(D3DPRESENT_PARAMETERS* pp) -> bool
 	auto iBest = -1;
 	auto iBestScore = 0;
 	Locator::getLogger()->debug("cur: {}x{} {}Hz, format {}",
-			   current.Width, current.Height,
-			   current.RefreshRate, static_cast<int>(current.Format));
+								current.Width,
+								current.Height,
+								current.RefreshRate,
+								static_cast<int>(current.Format));
 	for (auto i = 0; i < iCnt; ++i) {
 		D3DDISPLAYMODE mode;
 		g_pd3d->EnumAdapterModes(
@@ -610,8 +634,11 @@ D3DReduceParams(D3DPRESENT_PARAMETERS* pp) -> bool
 		}
 
 		Locator::getLogger()->trace("try: {}x{} {}Hz, format {}: score {}",
-				   mode.Width, mode.Height,
-				   mode.RefreshRate, static_cast<int>(mode.Format), iScore);
+									mode.Width,
+									mode.Height,
+									mode.RefreshRate,
+									static_cast<int>(mode.Format),
+									iScore);
 	}
 
 	if (iBest == -1) {
@@ -690,13 +717,14 @@ RageDisplay_D3D::TryVideoMode(const VideoModeParams& _p, bool& bNewDeviceOut)
   -> std::string
 {
 	auto p = _p;
-	Locator::getLogger()->warn("RageDisplay_D3D::TryVideoMode( {}, {}, {}, {}, {}, {} )",
-			  static_cast<int>(p.windowed),
-			  p.width,
-			  p.height,
-			  p.bpp,
-			  p.rate,
-			  static_cast<int>(p.vsync));
+	Locator::getLogger()->warn(
+	  "RageDisplay_D3D::TryVideoMode( {}, {}, {}, {}, {}, {} )",
+	  static_cast<int>(p.windowed),
+	  p.width,
+	  p.height,
+	  p.bpp,
+	  p.rate,
+	  static_cast<int>(p.vsync));
 
 	if (FindBackBufferType(p.windowed, p.bpp) ==
 		D3DFMT_UNKNOWN) { // no possible back buffer formats
@@ -712,6 +740,7 @@ RageDisplay_D3D::TryVideoMode(const VideoModeParams& _p, bool& bNewDeviceOut)
 	GraphicsWindow::CreateGraphicsWindow(p);
 
 	SetPresentParametersFromVideoModeParams(p, &g_d3dpp);
+	InvalidateStateCache(false, true);
 
 	// Display the window immediately, so we don't display the desktop ...
 	while (true) {
@@ -763,11 +792,67 @@ RageDisplay_D3D::ResolutionChanged()
 	RageDisplay::ResolutionChanged();
 }
 
+void
+RageDisplay_D3D::InvalidateStateCache(bool bFlushBatch,
+									  bool bResetDeviceDefaults)
+{
+	if (bFlushBatch && !m_vQuadBatchVerts.empty()) {
+		FlushQuadBatch();
+	} else {
+		m_vQuadBatchVerts.clear();
+	}
+	g_lastFVF = 0;
+
+	m_bAlphaBlendValid = false;
+	m_bBlendOpValid = false;
+	m_bSrcBlendValid = false;
+	m_bDestBlendValid = false;
+	m_bSrcBlendAlphaValid = false;
+	m_bDestBlendAlphaValid = false;
+	m_bZWriteValid = false;
+	m_bZEnableValid = false;
+	m_bZFuncValid = false;
+	m_bZBiasValid = false;
+	m_bAlphaTestValid = false;
+	m_bAlphaRefFuncValid = false;
+	m_bCullModeValid = false;
+	m_bLightingValid = false;
+	if (bResetDeviceDefaults) {
+		m_dwCachedZWrite = TRUE;
+		m_dwCachedZEnable = D3DZB_TRUE;
+		m_dwCachedZFunc = D3DCMP_LESSEQUAL;
+		m_dwCachedLighting = TRUE;
+	}
+
+	std::fill(std::begin(m_aBoundTex), std::end(m_aBoundTex), 0);
+	std::fill(
+	  std::begin(m_abBoundTexValid), std::end(m_abBoundTexValid), false);
+	std::fill(
+	  std::begin(m_abMinFilterValid), std::end(m_abMinFilterValid), false);
+	std::fill(
+	  std::begin(m_abMagFilterValid), std::end(m_abMagFilterValid), false);
+	std::fill(
+	  std::begin(m_abAddressUValid), std::end(m_abAddressUValid), false);
+	std::fill(
+	  std::begin(m_abAddressVValid), std::end(m_abAddressVValid), false);
+	std::fill(std::begin(m_abTexModeValid), std::end(m_abTexModeValid), false);
+
+	m_bProjUploadValid = false;
+	m_bViewUploadValid = false;
+	m_bWorldIsIdentity = false;
+	m_bWorldUploadValid = false;
+	std::fill(std::begin(m_abTexMatrixIsIdentity),
+			  std::end(m_abTexMatrixIsIdentity),
+			  false);
+	std::fill(
+	  std::begin(m_abTexMatrixValid), std::end(m_abTexMatrixValid), false);
+}
+
 // Reset anything which doesn't survive device loss
 void
 RageDisplay_D3D::RecoverFromDeviceLoss()
 {
-	g_lastFVF = 0;
+	InvalidateStateCache(false, true);
 }
 
 auto
@@ -777,8 +862,17 @@ RageDisplay_D3D::GetMaxTextureSize() const -> int
 }
 
 auto
+RageDisplay_D3D::SupportsNonPowerOfTwoTextures() const -> bool
+{
+	return ((g_DeviceCaps.TextureCaps & D3DPTEXTURECAPS_POW2) == 0U) &&
+		   ((g_DeviceCaps.TextureCaps & D3DPTEXTURECAPS_NONPOW2CONDITIONAL) ==
+			0U);
+}
+
+auto
 RageDisplay_D3D::BeginFrame() -> bool
 {
+	FlushQuadBatch();
 	GraphicsWindow::Update();
 
 	switch (g_pd3dDevice->TestCooperativeLevel()) {
@@ -791,6 +885,7 @@ RageDisplay_D3D::BeginFrame() -> bool
 			if (!sError.empty()) {
 				RageException::Throw(sError.c_str());
 			}
+			RecoverFromDeviceLoss();
 
 			break;
 		}
@@ -811,6 +906,7 @@ RageDisplay_D3D::BeginFrame() -> bool
 void
 RageDisplay_D3D::EndFrame()
 {
+	FlushQuadBatch();
 	g_pd3dDevice->EndScene();
 
 	FrameLimitBeforeVsync();
@@ -861,6 +957,7 @@ RageDisplay_D3D::SupportsThreadedRendering() -> bool
 auto
 RageDisplay_D3D::CreateScreenshot() -> RageSurface*
 {
+	FlushQuadBatch();
 	RageSurface* result = nullptr;
 
 	// Get the back buffer.
@@ -941,110 +1038,125 @@ RageDisplay_D3D::GetActualVideoModeParams() const
 }
 
 void
+RageDisplay_D3D::ComputeD3DProjectionMatrix(RageMatrix& out)
+{
+	RageMatrix m;
+	RageMatrixMultiply(&m, GetCentering(), GetProjectionTop());
+
+	if (g_bInvertY) {
+		RageMatrix flip;
+		RageMatrixScale(&flip, +1, -1, +1);
+		RageMatrixMultiply(&m, &flip, &m);
+	}
+
+	// Convert to OpenGL-style "pixel-centered" coords
+	auto m2 = GetCenteringMatrix(-0.5F, -0.5F, 0, 0);
+	RageMatrixMultiply(&out, &m2, &m);
+}
+
+void
 RageDisplay_D3D::SendCurrentMatrices()
 {
-	static RageMatrix Centering;
-	static RageMatrix Projection;
-
-	if (Centering != *GetCentering() || Projection != *GetProjectionTop()) {
-		Centering = *GetCentering();
-		Projection = *GetProjectionTop();
-
-		RageMatrix m;
-		RageMatrixMultiply(&m, GetCentering(), GetProjectionTop());
-
-		if (g_bInvertY) {
-			RageMatrix flip;
-			RageMatrixScale(&flip, +1, -1, +1);
-			RageMatrixMultiply(&m, &flip, &m);
-		}
-
-		// Convert to OpenGL-style "pixel-centered" coords
-		auto m2 = GetCenteringMatrix(-0.5F, -0.5F, 0, 0);
+	const uint64_t uCenteringRev = GetCenteringRev();
+	const uint64_t uProjRev = GetProjectionRev();
+	if (!m_bProjUploadValid || m_uUploadedCenteringRev != uCenteringRev ||
+		m_uUploadedProjRev != uProjRev || m_bUploadedInvertY != g_bInvertY) {
 		RageMatrix projection;
-		RageMatrixMultiply(&projection, &m2, &m);
-		g_pd3dDevice->SetTransform(D3DTS_PROJECTION,
-								   reinterpret_cast<D3DMATRIX*>(&projection));
+		ComputeD3DProjectionMatrix(projection);
+		g_pd3dDevice->SetTransform(
+		  D3DTS_PROJECTION, reinterpret_cast<const D3DMATRIX*>(&projection));
+		m_uUploadedCenteringRev = uCenteringRev;
+		m_uUploadedProjRev = uProjRev;
+		m_bUploadedInvertY = g_bInvertY;
+		m_bProjUploadValid = true;
+	}
 
-		g_pd3dDevice->SetTransform(D3DTS_VIEW, (D3DMATRIX*)GetViewTop());
-		g_pd3dDevice->SetTransform(D3DTS_WORLD, (D3DMATRIX*)GetWorldTop());
+	const uint64_t uViewRev = GetViewRev();
+	if (!m_bViewUploadValid || m_uUploadedViewRev != uViewRev) {
+		g_pd3dDevice->SetTransform(
+		  D3DTS_VIEW, reinterpret_cast<const D3DMATRIX*>(GetViewTop()));
+		m_uUploadedViewRev = uViewRev;
+		m_bViewUploadValid = true;
+	}
 
-		FOREACH_ENUM(TextureUnit, tu)
-		{
-			// If no texture is set for this texture unit, don't bother setting
-			// it up.
-			IDirect3DBaseTexture9* pTexture = nullptr;
-			g_pd3dDevice->GetTexture(tu, &pTexture);
-			if (pTexture == nullptr) {
-				continue;
-			}
-			pTexture->Release();
+	const uint64_t uWorldRev = GetWorldRev();
+	if (!m_bWorldUploadValid || m_uUploadedWorldRev != uWorldRev) {
+		g_pd3dDevice->SetTransform(
+		  D3DTS_WORLD, reinterpret_cast<const D3DMATRIX*>(GetWorldTop()));
+		m_uUploadedWorldRev = uWorldRev;
+		m_bWorldIsIdentity = IsWorldIdentity();
+		m_bWorldUploadValid = true;
+	}
 
-			// Optimization opportunity: Turn off texture transform if not using
-			// texture coords.
-			g_pd3dDevice->SetTextureStageState(
-			  tu, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_COUNT2);
-
-			if (g_bSphereMapping[tu]) {
-				static const auto tex = RageMatrix(0.5F,
-												   0.0F,
-												   0.0F,
-												   0.0F,
-												   0.0F,
-												   -0.5F,
-												   0.0F,
-												   0.0F,
-												   0.0F,
-												   0.0F,
-												   0.0F,
-												   0.0F,
-												   0.5F,
-												   -0.5F,
-												   0.0F,
-												   1.0F);
-				g_pd3dDevice->SetTransform(
-				  static_cast<D3DTRANSFORMSTATETYPE>(D3DTS_TEXTURE0 + tu),
-				  (D3DMATRIX*)&tex);
-
-				// Tell D3D to use transformed reflection vectors as texture
-				// co-ordinate 0 and then transform this coordinate by the
-				// specified texture matrix.
-				g_pd3dDevice->SetTextureStageState(
-				  tu,
-				  D3DTSS_TEXCOORDINDEX,
-				  D3DTSS_TCI_CAMERASPACEREFLECTIONVECTOR);
-			} else {
-				/* Direct3D is expecting a 3x3 matrix loaded into the 4x4 in
-				 * order to transform the 2-component texture coordinates. We
-				 * currently only use translate and scale, and ignore the z
-				 * component entirely, so convert the texture matrix from 4x4 to
-				 * 3x3 by dropping z. */
-
-				const auto& tex1 = *GetTextureTop();
-				const auto tex2 = RageMatrix(tex1.m[0][0],
-											 tex1.m[0][1],
-											 tex1.m[0][3],
-											 0,
-											 tex1.m[1][0],
-											 tex1.m[1][1],
-											 tex1.m[1][3],
-											 0,
-											 tex1.m[3][0],
-											 tex1.m[3][1],
-											 tex1.m[3][3],
-											 0,
-											 0,
-											 0,
-											 0,
-											 0);
-				g_pd3dDevice->SetTransform(
-				  D3DTRANSFORMSTATETYPE(D3DTS_TEXTURE0 + tu),
-				  (D3DMATRIX*)&tex2);
-
-				g_pd3dDevice->SetTextureStageState(
-				  tu, D3DTSS_TEXCOORDINDEX, D3DTSS_TCI_PASSTHRU);
-			}
+	const uint64_t uTexRev = GetTextureRev();
+	const bool bTexId = IsTextureIdentity();
+	FOREACH_ENUM(TextureUnit, tu)
+	{
+		if (tu >= static_cast<int>(g_DeviceCaps.MaxSimultaneousTextures) ||
+			!m_abBoundTexValid[tu] || m_aBoundTex[tu] == 0) {
+			continue;
 		}
+		if (m_abTexMatrixValid[tu] && m_auUploadedTexRev[tu] == uTexRev &&
+			m_abUploadedSphereMap[tu] == g_bSphereMapping[tu]) {
+			continue;
+		}
+
+		g_pd3dDevice->SetTextureStageState(
+		  tu, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_COUNT2);
+
+		if (g_bSphereMapping[tu]) {
+			static const auto tex = RageMatrix(0.5F,
+											   0.0F,
+											   0.0F,
+											   0.0F,
+											   0.0F,
+											   -0.5F,
+											   0.0F,
+											   0.0F,
+											   0.0F,
+											   0.0F,
+											   0.0F,
+											   0.0F,
+											   0.5F,
+											   -0.5F,
+											   0.0F,
+											   1.0F);
+			g_pd3dDevice->SetTransform(
+			  static_cast<D3DTRANSFORMSTATETYPE>(D3DTS_TEXTURE0 + tu),
+			  reinterpret_cast<const D3DMATRIX*>(&tex));
+			g_pd3dDevice->SetTextureStageState(
+			  tu, D3DTSS_TEXCOORDINDEX, D3DTSS_TCI_CAMERASPACEREFLECTIONVECTOR);
+			m_abTexMatrixIsIdentity[tu] = false;
+		} else {
+			/* Direct3D expects a 3x3 matrix in the 4x4 slot to transform
+			 * 2-component texture coordinates; drop Z to convert 4x4 -> 3x3. */
+			const auto& tex1 = *GetTextureTop();
+			const auto tex2 = RageMatrix(tex1.m[0][0],
+										 tex1.m[0][1],
+										 tex1.m[0][3],
+										 0,
+										 tex1.m[1][0],
+										 tex1.m[1][1],
+										 tex1.m[1][3],
+										 0,
+										 tex1.m[3][0],
+										 tex1.m[3][1],
+										 tex1.m[3][3],
+										 0,
+										 0,
+										 0,
+										 0,
+										 0);
+			g_pd3dDevice->SetTransform(
+			  static_cast<D3DTRANSFORMSTATETYPE>(D3DTS_TEXTURE0 + tu),
+			  reinterpret_cast<const D3DMATRIX*>(&tex2));
+			g_pd3dDevice->SetTextureStageState(
+			  tu, D3DTSS_TEXCOORDINDEX, D3DTSS_TCI_PASSTHRU);
+			m_abTexMatrixIsIdentity[tu] = bTexId;
+		}
+		m_auUploadedTexRev[tu] = uTexRev;
+		m_abUploadedSphereMap[tu] = g_bSphereMapping[tu];
+		m_abTexMatrixValid[tu] = true;
 	}
 }
 
@@ -1143,8 +1255,201 @@ RageDisplay_D3D::DeleteCompiledGeometry(RageCompiledGeometry* p)
 }
 
 void
+RageDisplay_D3D::FlushQuadBatch()
+{
+	if (m_vQuadBatchVerts.empty()) {
+		return;
+	}
+	const size_t uNumVerts = m_vQuadBatchVerts.size();
+	ASSERT((uNumVerts % 4) == 0);
+	const size_t uNumQuads = uNumVerts / 4;
+	const size_t uNumIndices = uNumQuads * 6;
+	if (m_vQuadBatchIndices.size() < uNumIndices) {
+		const size_t uOldQuads = m_vQuadBatchIndices.size() / 6;
+		m_vQuadBatchIndices.resize(uNumIndices);
+		for (size_t i = uOldQuads; i < uNumQuads; ++i) {
+			m_vQuadBatchIndices[i * 6 + 0] = static_cast<uint16_t>(i * 4 + 0);
+			m_vQuadBatchIndices[i * 6 + 1] = static_cast<uint16_t>(i * 4 + 1);
+			m_vQuadBatchIndices[i * 6 + 2] = static_cast<uint16_t>(i * 4 + 2);
+			m_vQuadBatchIndices[i * 6 + 3] = static_cast<uint16_t>(i * 4 + 2);
+			m_vQuadBatchIndices[i * 6 + 4] = static_cast<uint16_t>(i * 4 + 3);
+			m_vQuadBatchIndices[i * 6 + 5] = static_cast<uint16_t>(i * 4 + 0);
+		}
+	}
+
+	if (g_lastFVF != D3DFVF_RageSpriteVertex) {
+		g_lastFVF = D3DFVF_RageSpriteVertex;
+		g_pd3dDevice->SetFVF(D3DFVF_RageSpriteVertex);
+	}
+
+	if (!m_bProjUploadValid ||
+		m_uUploadedCenteringRev != m_uQuadBatchCenteringRev ||
+		m_uUploadedProjRev != m_uQuadBatchProjRev ||
+		m_bUploadedInvertY != m_bQuadBatchInvertY) {
+		g_pd3dDevice->SetTransform(
+		  D3DTS_PROJECTION,
+		  reinterpret_cast<const D3DMATRIX*>(&m_QuadBatchProjection));
+		m_uUploadedCenteringRev = m_uQuadBatchCenteringRev;
+		m_uUploadedProjRev = m_uQuadBatchProjRev;
+		m_bUploadedInvertY = m_bQuadBatchInvertY;
+		m_bProjUploadValid = true;
+	}
+
+	if (!m_bViewUploadValid || m_uUploadedViewRev != m_uQuadBatchViewRev) {
+		g_pd3dDevice->SetTransform(
+		  D3DTS_VIEW, reinterpret_cast<const D3DMATRIX*>(&m_QuadBatchView));
+		m_uUploadedViewRev = m_uQuadBatchViewRev;
+		m_bViewUploadValid = true;
+	}
+
+	if (!m_bWorldUploadValid || !m_bWorldIsIdentity) {
+		RageMatrix identity;
+		RageMatrixIdentity(&identity);
+		g_pd3dDevice->SetTransform(
+		  D3DTS_WORLD, reinterpret_cast<const D3DMATRIX*>(&identity));
+		m_bWorldIsIdentity = true;
+		if (IsWorldIdentity()) {
+			m_uUploadedWorldRev = GetWorldRev();
+			m_bWorldUploadValid = true;
+		} else {
+			m_bWorldUploadValid = false;
+		}
+	}
+
+	static const RageMatrix kTexIdentity(1.0F,
+										 0.0F,
+										 0.0F,
+										 0.0F,
+										 0.0F,
+										 1.0F,
+										 0.0F,
+										 0.0F,
+										 0.0F,
+										 0.0F,
+										 1.0F,
+										 0.0F,
+										 0.0F,
+										 0.0F,
+										 0.0F,
+										 0.0F);
+	FOREACH_ENUM(TextureUnit, tu)
+	{
+		if (tu >= static_cast<int>(g_DeviceCaps.MaxSimultaneousTextures) ||
+			!m_abBoundTexValid[tu] || m_aBoundTex[tu] == 0) {
+			continue;
+		}
+		if (!m_abTexMatrixValid[tu] || !m_abTexMatrixIsIdentity[tu] ||
+			m_abUploadedSphereMap[tu]) {
+			g_pd3dDevice->SetTextureStageState(
+			  tu, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_COUNT2);
+			g_pd3dDevice->SetTransform(
+			  static_cast<D3DTRANSFORMSTATETYPE>(D3DTS_TEXTURE0 + tu),
+			  reinterpret_cast<const D3DMATRIX*>(&kTexIdentity));
+			g_pd3dDevice->SetTextureStageState(
+			  tu, D3DTSS_TEXCOORDINDEX, D3DTSS_TCI_PASSTHRU);
+			m_abTexMatrixIsIdentity[tu] = true;
+			m_abUploadedSphereMap[tu] = false;
+			if (IsTextureIdentity()) {
+				m_auUploadedTexRev[tu] = GetTextureRev();
+				m_abTexMatrixValid[tu] = true;
+			} else {
+				m_abTexMatrixValid[tu] = false;
+			}
+		}
+	}
+
+	g_pd3dDevice->DrawIndexedPrimitiveUP(D3DPT_TRIANGLELIST,
+										 0,
+										 static_cast<UINT>(uNumVerts),
+										 static_cast<UINT>(uNumQuads * 2),
+										 m_vQuadBatchIndices.data(),
+										 D3DFMT_INDEX16,
+										 m_vQuadBatchVerts.data(),
+										 sizeof(RageSpriteVertex));
+	m_vQuadBatchVerts.clear();
+}
+
+static void
+AppendTransformedQuadsD3D(std::vector<RageSpriteVertex>& batch,
+						  const RageSpriteVertex v[],
+						  int iNumVerts,
+						  const RageMatrix* pWorld)
+{
+	const size_t uStart = batch.size();
+	batch.resize(uStart + static_cast<size_t>(iNumVerts));
+	RageSpriteVertex* pDst = batch.data() + uStart;
+	if (pWorld == nullptr) {
+		std::copy_n(v, iNumVerts, pDst);
+		return;
+	}
+	const float m00 = pWorld->m[0][0], m10 = pWorld->m[1][0],
+				m20 = pWorld->m[2][0], m30 = pWorld->m[3][0];
+	const float m01 = pWorld->m[0][1], m11 = pWorld->m[1][1],
+				m21 = pWorld->m[2][1], m31 = pWorld->m[3][1];
+	const float m02 = pWorld->m[0][2], m12 = pWorld->m[1][2],
+				m22 = pWorld->m[2][2], m32 = pWorld->m[3][2];
+	for (int i = 0; i < iNumVerts; ++i) {
+		const RageSpriteVertex& src = v[i];
+		RageSpriteVertex& dst = pDst[i];
+		dst.p.x = m00 * src.p.x + m10 * src.p.y + m20 * src.p.z + m30;
+		dst.p.y = m01 * src.p.x + m11 * src.p.y + m21 * src.p.z + m31;
+		dst.p.z = m02 * src.p.x + m12 * src.p.y + m22 * src.p.z + m32;
+		dst.n = src.n;
+		dst.c = src.c;
+		dst.t = src.t;
+	}
+}
+
+void
 RageDisplay_D3D::DrawQuadsInternal(const RageSpriteVertex v[], int iNumVerts)
 {
+	if (iNumVerts <= 0) {
+		return;
+	}
+	const bool bAnySphereMap = std::any_of(std::begin(g_bSphereMapping),
+										   std::end(g_bSphereMapping),
+										   [](bool b) { return b; });
+	if (iNumVerts <= 4096 && (iNumVerts % 4) == 0 && m_dwCachedLighting == 0 &&
+		!bAnySphereMap && IsTextureIdentity()) {
+		const RageMatrix* pWorld = IsWorldIdentity() ? nullptr : GetWorldTop();
+		const bool bAffineWorld =
+		  pWorld == nullptr ||
+		  (pWorld->m[0][3] == 0.0F && pWorld->m[1][3] == 0.0F &&
+		   pWorld->m[2][3] == 0.0F && pWorld->m[3][3] == 1.0F);
+		if (bAffineWorld) {
+			const uint64_t uCenteringRev = GetCenteringRev();
+			const uint64_t uProjRev = GetProjectionRev();
+			const uint64_t uViewRev = GetViewRev();
+			if (!m_vQuadBatchVerts.empty() &&
+				(m_uQuadBatchCenteringRev != uCenteringRev ||
+				 m_uQuadBatchProjRev != uProjRev ||
+				 m_uQuadBatchViewRev != uViewRev ||
+				 m_bQuadBatchInvertY != g_bInvertY ||
+				 m_vQuadBatchVerts.size() + static_cast<size_t>(iNumVerts) >
+				   kMaxQuadBatchVerts)) {
+				FlushQuadBatch();
+			}
+			if (m_vQuadBatchVerts.empty()) {
+				m_uQuadBatchCenteringRev = uCenteringRev;
+				m_uQuadBatchProjRev = uProjRev;
+				m_uQuadBatchViewRev = uViewRev;
+				m_bQuadBatchInvertY = g_bInvertY;
+				if (!m_bProjUploadValid ||
+					m_uUploadedCenteringRev != uCenteringRev ||
+					m_uUploadedProjRev != uProjRev ||
+					m_bUploadedInvertY != g_bInvertY) {
+					ComputeD3DProjectionMatrix(m_QuadBatchProjection);
+				}
+				if (!m_bViewUploadValid || m_uUploadedViewRev != uViewRev) {
+					m_QuadBatchView = *GetViewTop();
+				}
+			}
+			AppendTransformedQuadsD3D(m_vQuadBatchVerts, v, iNumVerts, pWorld);
+			return;
+		}
+	}
+
+	FlushQuadBatch();
 	// there isn't a quad primitive in D3D, so we have to fake it with indexed
 	// triangles
 	const auto iNumQuads = iNumVerts / 4;
@@ -1194,6 +1499,7 @@ void
 RageDisplay_D3D::DrawQuadStripInternal(const RageSpriteVertex v[],
 									   int iNumVerts)
 {
+	FlushQuadBatch();
 	// there isn't a quad strip primitive in D3D, so we have to fake it with
 	// indexed triangles
 	const auto iNumQuads = (iNumVerts - 2) / 2;
@@ -1243,6 +1549,7 @@ void
 RageDisplay_D3D::DrawSymmetricQuadStripInternal(const RageSpriteVertex v[],
 												int iNumVerts)
 {
+	FlushQuadBatch();
 	const auto iNumPieces = (iNumVerts - 3) / 3;
 	const auto iNumTriangles = iNumPieces * 4;
 	const auto iNumIndices = iNumTriangles * 3;
@@ -1296,6 +1603,7 @@ RageDisplay_D3D::DrawSymmetricQuadStripInternal(const RageSpriteVertex v[],
 void
 RageDisplay_D3D::DrawFanInternal(const RageSpriteVertex v[], int iNumVerts)
 {
+	FlushQuadBatch();
 	if (g_lastFVF != D3DFVF_RageSpriteVertex) {
 		g_lastFVF = D3DFVF_RageSpriteVertex;
 		g_pd3dDevice->SetFVF(D3DFVF_RageSpriteVertex);
@@ -1314,6 +1622,7 @@ RageDisplay_D3D::DrawFanInternal(const RageSpriteVertex v[], int iNumVerts)
 void
 RageDisplay_D3D::DrawStripInternal(const RageSpriteVertex v[], int iNumVerts)
 {
+	FlushQuadBatch();
 	if (g_lastFVF != D3DFVF_RageSpriteVertex) {
 		g_lastFVF = D3DFVF_RageSpriteVertex;
 		g_pd3dDevice->SetFVF(D3DFVF_RageSpriteVertex);
@@ -1333,6 +1642,7 @@ void
 RageDisplay_D3D::DrawTrianglesInternal(const RageSpriteVertex v[],
 									   int iNumVerts)
 {
+	FlushQuadBatch();
 	if (g_lastFVF != D3DFVF_RageSpriteVertex) {
 		g_lastFVF = D3DFVF_RageSpriteVertex;
 		g_pd3dDevice->SetFVF(D3DFVF_RageSpriteVertex);
@@ -1352,6 +1662,7 @@ void
 RageDisplay_D3D::DrawCompiledGeometryInternal(const RageCompiledGeometry* p,
 											  int iMeshIndex)
 {
+	FlushQuadBatch();
 	SendCurrentMatrices();
 
 	/* If lighting is off, then the current material will have no effect. We
@@ -1359,17 +1670,16 @@ RageDisplay_D3D::DrawCompiledGeometryInternal(const RageCompiledGeometry* p,
 	 * material color in texture factor and modify the texture stage to use it
 	 * instead of the vertex color (our models don't have vertex coloring
 	 * anyway). */
-	DWORD bLighting;
-	g_pd3dDevice->GetRenderState(D3DRS_LIGHTING, &bLighting);
-
-	if (bLighting == 0u) {
+	const bool bUnlit = (m_dwCachedLighting == 0);
+	if (bUnlit) {
 		g_pd3dDevice->SetTextureStageState(0, D3DTSS_COLORARG2, D3DTA_TFACTOR);
 		g_pd3dDevice->SetTextureStageState(0, D3DTSS_ALPHAARG2, D3DTA_TFACTOR);
 	}
 
 	p->Draw(iMeshIndex);
+	m_abTexMatrixValid[TextureUnit_1] = false;
 
-	if (bLighting == 0u) {
+	if (bUnlit) {
 		g_pd3dDevice->SetTextureStageState(0, D3DTSS_COLORARG2, D3DTA_CURRENT);
 		g_pd3dDevice->SetTextureStageState(0, D3DTSS_ALPHAARG2, D3DTA_CURRENT);
 	}
@@ -1395,8 +1705,42 @@ D3DFVF_RageSpriteVertex ); SendCurrentMatrices(); g_pd3dDevice->DrawPrimitiveUP(
 */
 
 void
+RageDisplay_D3D::SetRenderStateCached(uint32_t state,
+									  uint32_t value,
+									  uint32_t& cached,
+									  bool& valid)
+{
+	if (valid && cached == value) {
+		return;
+	}
+	FlushQuadBatch();
+	g_pd3dDevice->SetRenderState(static_cast<D3DRENDERSTATETYPE>(state),
+								 static_cast<DWORD>(value));
+	cached = value;
+	valid = true;
+}
+
+void
+RageDisplay_D3D::SetSamplerStateCached(TextureUnit tu,
+									   uint32_t type,
+									   uint32_t value,
+									   uint32_t& cached,
+									   bool& valid)
+{
+	if (valid && cached == value) {
+		return;
+	}
+	FlushQuadBatch();
+	g_pd3dDevice->SetSamplerState(
+	  tu, static_cast<D3DSAMPLERSTATETYPE>(type), static_cast<DWORD>(value));
+	cached = value;
+	valid = true;
+}
+
+void
 RageDisplay_D3D::ClearAllTextures()
 {
+	FlushQuadBatch();
 	FOREACH_ENUM(TextureUnit, i)
 	SetTexture(i, 0);
 }
@@ -1410,43 +1754,46 @@ RageDisplay_D3D::GetNumTextureUnits() -> int
 void
 RageDisplay_D3D::SetTexture(TextureUnit tu, intptr_t iTexture)
 {
-	//	g_DeviceCaps.MaxSimultaneousTextures = 1;
-	if (tu >= static_cast<int>(g_DeviceCaps.MaxSimultaneousTextures)) {
-		// not supported
+	if (tu < 0 || tu >= NUM_TextureUnit ||
+		tu >= static_cast<int>(g_DeviceCaps.MaxSimultaneousTextures)) {
+		return;
+	}
+	if (m_abBoundTexValid[tu] && m_aBoundTex[tu] == iTexture) {
+		if (iTexture != 0 && !g_TexResourceToTexturePalette.empty()) {
+			FlushQuadBatch();
+			SetPalette(iTexture);
+		}
 		return;
 	}
 
+	FlushQuadBatch();
+	const bool bWasNull = !m_abBoundTexValid[tu] || m_aBoundTex[tu] == 0;
 	if (iTexture == 0) {
 		g_pd3dDevice->SetTexture(tu, nullptr);
-
-		/* Intentionally commented out. Don't mess with texture stage state
-		 * when just setting the texture. Model sets its texture modes before
-		 * setting the final texture. */
-		// g_pd3dDevice->SetTextureStageState( tu, D3DTSS_COLOROP,
-		// D3DTOP_DISABLE );
 	} else {
 		auto* pTex = reinterpret_cast<IDirect3DTexture9*>(iTexture);
 		g_pd3dDevice->SetTexture(tu, pTex);
-
-		/* Intentionally commented out. Don't mess with texture stage state
-		 * when just setting the texture. Model sets its texture modes before
-		 * setting the final texture. */
-		// g_pd3dDevice->SetTextureStageState( tu, D3DTSS_COLOROP,
-		// D3DTOP_MODULATE );
-
-		// Set palette (if any)
 		SetPalette(iTexture);
+		if (bWasNull) {
+			m_abTexMatrixValid[tu] = false;
+		}
 	}
+	m_aBoundTex[tu] = iTexture;
+	m_abBoundTexValid[tu] = true;
 }
 
 void
 RageDisplay_D3D::SetTextureMode(TextureUnit tu, TextureMode tm)
 {
-	if (tu >= static_cast<int>(g_DeviceCaps.MaxSimultaneousTextures)) {
-		// not supported
+	if (tu < 0 || tu >= NUM_TextureUnit ||
+		tu >= static_cast<int>(g_DeviceCaps.MaxSimultaneousTextures)) {
+		return;
+	}
+	if (m_abTexModeValid[tu] && m_aCachedTexMode[tu] == tm) {
 		return;
 	}
 
+	FlushQuadBatch();
 	switch (tm) {
 		case TextureMode_Modulate:
 			// Use D3DTA_CURRENT instead of diffuse so that multitexturing works
@@ -1493,143 +1840,164 @@ RageDisplay_D3D::SetTextureMode(TextureUnit tu, TextureMode tm)
 			  tu, D3DTSS_ALPHAOP, D3DTOP_MODULATE);
 			break;
 		default:
-			Locator::getLogger()->warn("RageDisplay_D3D::SetTextureMode called with invalid TextureMode");
+			Locator::getLogger()->warn("RageDisplay_D3D::SetTextureMode called "
+									   "with invalid TextureMode");
+			return;
 	}
+	m_aCachedTexMode[tu] = tm;
+	m_abTexModeValid[tu] = true;
 }
 
 void
 RageDisplay_D3D::SetTextureFiltering(TextureUnit tu, bool b)
 {
-	if (tu >= static_cast<int>(g_DeviceCaps.MaxSimultaneousTextures)) {
-		// not supported
+	if (tu < 0 || tu >= NUM_TextureUnit ||
+		tu >= static_cast<int>(g_DeviceCaps.MaxSimultaneousTextures)) {
 		return;
 	}
 
-	g_pd3dDevice->SetSamplerState(
-	  tu, D3DSAMP_MINFILTER, b ? D3DTEXF_LINEAR : D3DTEXF_POINT);
-	g_pd3dDevice->SetSamplerState(
-	  tu, D3DSAMP_MAGFILTER, b ? D3DTEXF_LINEAR : D3DTEXF_POINT);
+	const uint32_t dwFilter = b ? D3DTEXF_LINEAR : D3DTEXF_POINT;
+	SetSamplerStateCached(tu,
+						  D3DSAMP_MINFILTER,
+						  dwFilter,
+						  m_adwMinFilter[tu],
+						  m_abMinFilterValid[tu]);
+	SetSamplerStateCached(tu,
+						  D3DSAMP_MAGFILTER,
+						  dwFilter,
+						  m_adwMagFilter[tu],
+						  m_abMagFilterValid[tu]);
 }
 
 void
 RageDisplay_D3D::SetBlendMode(BlendMode mode)
 {
-	g_pd3dDevice->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
+	SetRenderStateCached(
+	  D3DRS_ALPHABLENDENABLE, TRUE, m_dwCachedAlphaBlend, m_bAlphaBlendValid);
+	SetRenderStateCached(D3DRS_BLENDOP,
+						 mode == BLEND_INVERT_DEST ? D3DBLENDOP_SUBTRACT
+												   : D3DBLENDOP_ADD,
+						 m_dwCachedBlendOp,
+						 m_bBlendOpValid);
 
-	if (mode == BLEND_INVERT_DEST) {
-		g_pd3dDevice->SetRenderState(D3DRS_BLENDOP, D3DBLENDOP_SUBTRACT);
-	} else {
-		g_pd3dDevice->SetRenderState(D3DRS_BLENDOP, D3DBLENDOP_ADD);
-	}
+	uint32_t dwSrcBlend = D3DBLEND_SRCALPHA;
+	uint32_t dwDestBlend = D3DBLEND_INVSRCALPHA;
+	bool bSeparateAlpha = false;
+	uint32_t dwSrcBlendAlpha = D3DBLEND_ONE;
+	uint32_t dwDestBlendAlpha = D3DBLEND_ZERO;
 
 	switch (mode) {
 		case BLEND_NORMAL:
-			g_pd3dDevice->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
-			g_pd3dDevice->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
+			dwSrcBlend = D3DBLEND_SRCALPHA;
+			dwDestBlend = D3DBLEND_INVSRCALPHA;
 			break;
 		case BLEND_ADD:
-			g_pd3dDevice->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
-			g_pd3dDevice->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_ONE);
+			dwSrcBlend = D3DBLEND_SRCALPHA;
+			dwDestBlend = D3DBLEND_ONE;
 			break;
-			// This is not the right way to do BLEND_SUBTRACT.  This code is
-			// only here to prevent crashing when someone tries to use it. -Kyz
 		case BLEND_SUBTRACT:
-			g_pd3dDevice->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
-			g_pd3dDevice->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_ZERO);
+			dwSrcBlend = D3DBLEND_SRCALPHA;
+			dwDestBlend = D3DBLEND_ZERO;
 			break;
 		case BLEND_MODULATE:
-			g_pd3dDevice->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_ZERO);
-			g_pd3dDevice->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_SRCCOLOR);
+			dwSrcBlend = D3DBLEND_ZERO;
+			dwDestBlend = D3DBLEND_SRCCOLOR;
 			break;
 		case BLEND_COPY_SRC:
-			g_pd3dDevice->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_ONE);
-			g_pd3dDevice->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_ZERO);
+			dwSrcBlend = D3DBLEND_ONE;
+			dwDestBlend = D3DBLEND_ZERO;
 			break;
-			/* Effects currently missing in D3D: BLEND_ALPHA_MASK,
-			 * BLEND_ALPHA_KNOCK_OUT These two may require DirectX9 since
-			 * D3DRS_SRCALPHA and D3DRS_DESTALPHA don't seem to exist in DX8.
-			 * -aj */
 		case BLEND_ALPHA_MASK:
-			// RGB: iSourceRGB = GL_ZERO; iDestRGB = GL_ONE;
-			g_pd3dDevice->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_ZERO);
-			g_pd3dDevice->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_ONE);
-			// Alpha: iSourceAlpha = GL_ZERO; iDestAlpha = GL_SRC_ALPHA;
-
-			g_pd3dDevice->SetRenderState(D3DRS_SRCBLENDALPHA, D3DBLEND_ZERO);
-			g_pd3dDevice->SetRenderState(D3DRS_DESTBLENDALPHA,
-										 D3DBLEND_SRCALPHA);
-
+			dwSrcBlend = D3DBLEND_ZERO;
+			dwDestBlend = D3DBLEND_ONE;
+			bSeparateAlpha = true;
+			dwSrcBlendAlpha = D3DBLEND_ZERO;
+			dwDestBlendAlpha = D3DBLEND_SRCALPHA;
 			break;
 		case BLEND_ALPHA_KNOCK_OUT:
-			// RGB: iSourceRGB = GL_ZERO; iDestRGB = GL_ONE;
-			g_pd3dDevice->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_ZERO);
-			g_pd3dDevice->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_ONE);
-			// Alpha: iSourceAlpha = GL_ZERO; iDestAlpha =
-			// GL_ONE_MINUS_SRC_ALPHA;
-
-			g_pd3dDevice->SetRenderState(D3DRS_SRCBLENDALPHA, D3DBLEND_ZERO);
-			g_pd3dDevice->SetRenderState(D3DRS_DESTBLENDALPHA,
-										 D3DBLEND_INVSRCALPHA);
-
+			dwSrcBlend = D3DBLEND_ZERO;
+			dwDestBlend = D3DBLEND_ONE;
+			bSeparateAlpha = true;
+			dwSrcBlendAlpha = D3DBLEND_ZERO;
+			dwDestBlendAlpha = D3DBLEND_INVSRCALPHA;
 			break;
 		case BLEND_ALPHA_MULTIPLY:
-			g_pd3dDevice->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
-			g_pd3dDevice->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_ZERO);
+			dwSrcBlend = D3DBLEND_SRCALPHA;
+			dwDestBlend = D3DBLEND_ZERO;
 			break;
 		case BLEND_WEIGHTED_MULTIPLY:
-			g_pd3dDevice->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_DESTCOLOR);
-			g_pd3dDevice->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_SRCCOLOR);
+			dwSrcBlend = D3DBLEND_DESTCOLOR;
+			dwDestBlend = D3DBLEND_SRCCOLOR;
 			break;
 		case BLEND_INVERT_DEST:
-			g_pd3dDevice->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_ONE);
-			g_pd3dDevice->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_ONE);
+			dwSrcBlend = D3DBLEND_ONE;
+			dwDestBlend = D3DBLEND_ONE;
 			break;
 		case BLEND_NO_EFFECT:
-			g_pd3dDevice->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_ZERO);
-			g_pd3dDevice->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_ONE);
+			dwSrcBlend = D3DBLEND_ZERO;
+			dwDestBlend = D3DBLEND_ONE;
 			break;
 		default:
 			FAIL_M(ssprintf("Invalid BlendMode: %i", mode));
+	}
+
+	SetRenderStateCached(
+	  D3DRS_SRCBLEND, dwSrcBlend, m_dwCachedSrcBlend, m_bSrcBlendValid);
+	SetRenderStateCached(
+	  D3DRS_DESTBLEND, dwDestBlend, m_dwCachedDestBlend, m_bDestBlendValid);
+	if (bSeparateAlpha || m_bSrcBlendAlphaValid || m_bDestBlendAlphaValid) {
+		SetRenderStateCached(D3DRS_SRCBLENDALPHA,
+							 dwSrcBlendAlpha,
+							 m_dwCachedSrcBlendAlpha,
+							 m_bSrcBlendAlphaValid);
+		SetRenderStateCached(D3DRS_DESTBLENDALPHA,
+							 dwDestBlendAlpha,
+							 m_dwCachedDestBlendAlpha,
+							 m_bDestBlendAlphaValid);
 	}
 }
 
 auto
 RageDisplay_D3D::IsZWriteEnabled() const -> bool
 {
-	DWORD b;
-	g_pd3dDevice->GetRenderState(D3DRS_ZWRITEENABLE, &b);
-	return b != 0;
+	return m_dwCachedZWrite != 0;
 }
 
 void
 RageDisplay_D3D::SetZBias(float f)
 {
+	if (m_bZBiasValid && m_fCachedZBias == f) {
+		return;
+	}
+	FlushQuadBatch();
 	D3DVIEWPORT9 viewData;
 	g_pd3dDevice->GetViewport(&viewData);
 	viewData.MinZ = SCALE(f, 0.0F, 1.0F, 0.05F, 0.0F);
 	viewData.MaxZ = SCALE(f, 0.0F, 1.0F, 1.0F, 0.95F);
 	g_pd3dDevice->SetViewport(&viewData);
+	m_fCachedZBias = f;
+	m_bZBiasValid = true;
 }
 
 auto
 RageDisplay_D3D::IsZTestEnabled() const -> bool
 {
-	DWORD b;
-	g_pd3dDevice->GetRenderState(D3DRS_ZFUNC, &b);
-	return b != D3DCMP_ALWAYS;
+	return m_dwCachedZFunc != D3DCMP_ALWAYS;
 }
 
 void
 RageDisplay_D3D::SetZWrite(bool b)
 {
-	g_pd3dDevice->SetRenderState(D3DRS_ZWRITEENABLE, static_cast<DWORD>(b));
+	SetRenderStateCached(
+	  D3DRS_ZWRITEENABLE, b ? TRUE : FALSE, m_dwCachedZWrite, m_bZWriteValid);
 }
 
 void
 RageDisplay_D3D::SetZTestMode(ZTestMode mode)
 {
-	g_pd3dDevice->SetRenderState(D3DRS_ZENABLE, D3DZB_TRUE);
-	DWORD dw;
+	SetRenderStateCached(
+	  D3DRS_ZENABLE, D3DZB_TRUE, m_dwCachedZEnable, m_bZEnableValid);
+	uint32_t dw;
 	switch (mode) {
 		case ZTEST_OFF:
 			dw = D3DCMP_ALWAYS;
@@ -1644,12 +2012,13 @@ RageDisplay_D3D::SetZTestMode(ZTestMode mode)
 			dw = D3DCMP_NEVER;
 			FAIL_M(ssprintf("Invalid ZTestMode: %i", mode));
 	}
-	g_pd3dDevice->SetRenderState(D3DRS_ZFUNC, dw);
+	SetRenderStateCached(D3DRS_ZFUNC, dw, m_dwCachedZFunc, m_bZFuncValid);
 }
 
 void
 RageDisplay_D3D::ClearZBuffer()
 {
+	FlushQuadBatch();
 	g_pd3dDevice->Clear(
 	  0, nullptr, D3DCLEAR_ZBUFFER, D3DCOLOR_XRGB(0, 0, 0), 1.0F, 0x00000000);
 }
@@ -1657,14 +2026,16 @@ RageDisplay_D3D::ClearZBuffer()
 void
 RageDisplay_D3D::SetTextureWrapping(TextureUnit tu, bool b)
 {
-	if (tu >= static_cast<int>(g_DeviceCaps.MaxSimultaneousTextures)) {
-		// not supported
+	if (tu < 0 || tu >= NUM_TextureUnit ||
+		tu >= static_cast<int>(g_DeviceCaps.MaxSimultaneousTextures)) {
 		return;
 	}
 
-	const int mode = b ? D3DTADDRESS_WRAP : D3DTADDRESS_CLAMP;
-	g_pd3dDevice->SetSamplerState(tu, D3DSAMP_ADDRESSU, mode);
-	g_pd3dDevice->SetSamplerState(tu, D3DSAMP_ADDRESSV, mode);
+	const uint32_t mode = b ? D3DTADDRESS_WRAP : D3DTADDRESS_CLAMP;
+	SetSamplerStateCached(
+	  tu, D3DSAMP_ADDRESSU, mode, m_adwAddressU[tu], m_abAddressUValid[tu]);
+	SetSamplerStateCached(
+	  tu, D3DSAMP_ADDRESSV, mode, m_adwAddressV[tu], m_abAddressVValid[tu]);
 }
 
 void
@@ -1679,10 +2050,7 @@ RageDisplay_D3D::SetMaterial(const RageColor& emissive,
 	 * material color in texture factor and modify the texture stage to use it
 	 * instead of the vertex color (our models don't have vertex coloring
 	 * anyway). */
-	DWORD bLighting;
-	g_pd3dDevice->GetRenderState(D3DRS_LIGHTING, &bLighting);
-
-	if (bLighting != 0u) {
+	if (m_dwCachedLighting != 0) {
 		D3DMATERIAL9 mat;
 		memcpy(&mat.Diffuse, diffuse, sizeof(float) * 4);
 		memcpy(&mat.Ambient, ambient, sizeof(float) * 4);
@@ -1696,7 +2064,8 @@ RageDisplay_D3D::SetMaterial(const RageColor& emissive,
 		c.g += emissive.g + ambient.g;
 		c.b += emissive.b + ambient.b;
 		RageVColor c2 = c;
-		const auto c3 = *reinterpret_cast<DWORD*>(&c2);
+		DWORD c3 = 0;
+		memcpy(&c3, &c2, sizeof(DWORD));
 		g_pd3dDevice->SetRenderState(D3DRS_TEXTUREFACTOR, c3);
 	}
 }
@@ -1704,7 +2073,8 @@ RageDisplay_D3D::SetMaterial(const RageColor& emissive,
 void
 RageDisplay_D3D::SetLighting(bool b)
 {
-	g_pd3dDevice->SetRenderState(D3DRS_LIGHTING, static_cast<DWORD>(b));
+	SetRenderStateCached(
+	  D3DRS_LIGHTING, b ? TRUE : FALSE, m_dwCachedLighting, m_bLightingValid);
 }
 
 void
@@ -1747,19 +2117,22 @@ RageDisplay_D3D::SetLightDirectional(int index,
 void
 RageDisplay_D3D::SetCullMode(CullMode mode)
 {
+	uint32_t dwCull = D3DCULL_NONE;
 	switch (mode) {
 		case CULL_BACK:
-			g_pd3dDevice->SetRenderState(D3DRS_CULLMODE, D3DCULL_CW);
+			dwCull = D3DCULL_CW;
 			break;
 		case CULL_FRONT:
-			g_pd3dDevice->SetRenderState(D3DRS_CULLMODE, D3DCULL_CCW);
+			dwCull = D3DCULL_CCW;
 			break;
 		case CULL_NONE:
-			g_pd3dDevice->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
+			dwCull = D3DCULL_NONE;
 			break;
 		default:
 			FAIL_M(ssprintf("Invalid CullMode: %i", mode));
 	}
+	SetRenderStateCached(
+	  D3DRS_CULLMODE, dwCull, m_dwCachedCullMode, m_bCullModeValid);
 }
 
 void
@@ -1767,6 +2140,16 @@ RageDisplay_D3D::DeleteTexture(intptr_t iTexHandle)
 {
 	if (iTexHandle == 0) {
 		return;
+	}
+
+	FOREACH_ENUM(TextureUnit, tu)
+	{
+		if (m_abBoundTexValid[tu] && m_aBoundTex[tu] == iTexHandle) {
+			FlushQuadBatch();
+			g_pd3dDevice->SetTexture(tu, nullptr);
+			m_aBoundTex[tu] = 0;
+			m_abBoundTexValid[tu] = true;
+		}
 	}
 
 	auto* pTex = reinterpret_cast<IDirect3DTexture9*>(iTexHandle);
@@ -1797,16 +2180,21 @@ RageDisplay_D3D::CreateTexture(RagePixelFormat pixfmt,
 							   RageSurface* img,
 							   bool /*bGenerateMipMaps*/) -> intptr_t
 {
-	HRESULT hr;
-	IDirect3DTexture9* pTex;
-	hr = g_pd3dDevice->CreateTexture(power_of_two(img->w),
-									 power_of_two(img->h),
-									 1,
-									 0,
-									 D3DFORMATS[pixfmt],
-									 D3DPOOL_MANAGED,
-									 &pTex,
-									 nullptr);
+	const UINT uWidth = SupportsNonPowerOfTwoTextures()
+						  ? static_cast<UINT>(std::max(1, img->w))
+						  : static_cast<UINT>(power_of_two(img->w));
+	const UINT uHeight = SupportsNonPowerOfTwoTextures()
+						   ? static_cast<UINT>(std::max(1, img->h))
+						   : static_cast<UINT>(power_of_two(img->h));
+	IDirect3DTexture9* pTex = nullptr;
+	const HRESULT hr = g_pd3dDevice->CreateTexture(uWidth,
+												   uHeight,
+												   1,
+												   0,
+												   D3DFORMATS[pixfmt],
+												   D3DPOOL_MANAGED,
+												   &pTex,
+												   nullptr);
 
 	if (FAILED(hr)) {
 		RageException::Throw("CreateTexture(%i,%i,%s) failed: %s",
@@ -1848,6 +2236,15 @@ RageDisplay_D3D::UpdateTexture(intptr_t uTexHandle,
 							   int width,
 							   int height)
 {
+	if (!m_vQuadBatchVerts.empty()) {
+		FOREACH_ENUM(TextureUnit, tu)
+		{
+			if (m_abBoundTexValid[tu] && m_aBoundTex[tu] == uTexHandle) {
+				FlushQuadBatch();
+				break;
+			}
+		}
+	}
 	auto* pTex = reinterpret_cast<IDirect3DTexture9*>(uTexHandle);
 	ASSERT(pTex != nullptr);
 
@@ -1887,9 +2284,16 @@ RageDisplay_D3D::UpdateTexture(intptr_t uTexHandle,
 void
 RageDisplay_D3D::SetAlphaTest(bool b)
 {
-	g_pd3dDevice->SetRenderState(D3DRS_ALPHATESTENABLE, static_cast<DWORD>(b));
-	g_pd3dDevice->SetRenderState(D3DRS_ALPHAREF, 0);
-	g_pd3dDevice->SetRenderState(D3DRS_ALPHAFUNC, D3DCMP_GREATER);
+	if (!m_bAlphaRefFuncValid) {
+		FlushQuadBatch();
+		g_pd3dDevice->SetRenderState(D3DRS_ALPHAREF, 0);
+		g_pd3dDevice->SetRenderState(D3DRS_ALPHAFUNC, D3DCMP_GREATER);
+		m_bAlphaRefFuncValid = true;
+	}
+	SetRenderStateCached(D3DRS_ALPHATESTENABLE,
+						 b ? TRUE : FALSE,
+						 m_dwCachedAlphaTest,
+						 m_bAlphaTestValid);
 }
 
 auto
@@ -1964,8 +2368,12 @@ D3DRenderTarget_FramebufferObject::Create(const RenderTargetParam& param,
 {
 	m_Param = param;
 
-	const auto iTextureWidth = power_of_two(param.iWidth);
-	const auto iTextureHeight = power_of_two(param.iHeight);
+	const bool bNpot =
+	  DISPLAY != nullptr && DISPLAY->SupportsNonPowerOfTwoTextures();
+	const auto iTextureWidth =
+	  bNpot ? std::max(1, param.iWidth) : power_of_two(param.iWidth);
+	const auto iTextureHeight =
+	  bNpot ? std::max(1, param.iHeight) : power_of_two(param.iHeight);
 
 	iTextureWidthOut = iTextureWidth;
 	iTextureHeightOut = iTextureHeight;
@@ -2018,7 +2426,8 @@ D3DRenderTarget_FramebufferObject::StartRenderingTo()
 		Locator::getLogger()->warn("Failed to set target to RenderTarget");
 
 	if (!SUCCEEDED(g_pd3dDevice->SetDepthStencilSurface(m_iDepthBufferHandle)))
-		Locator::getLogger()->warn("Failed to set targetDepth to RenderTargetDepth");
+		Locator::getLogger()->warn(
+		  "Failed to set targetDepth to RenderTargetDepth");
 }
 
 void
@@ -2029,7 +2438,8 @@ D3DRenderTarget_FramebufferObject::FinishRenderingTo()
 		Locator::getLogger()->warn("Failed to set target to BackBuffer");
 
 	if (!SUCCEEDED(g_pd3dDevice->SetDepthStencilSurface(defaultDepthBuffer)))
-		Locator::getLogger()->warn("Failed to set targetDepth to BackBufferDepth");
+		Locator::getLogger()->warn(
+		  "Failed to set targetDepth to BackBufferDepth");
 }
 
 auto
@@ -2063,6 +2473,7 @@ RageDisplay_D3D::GetRenderTarget() -> intptr_t
 void
 RageDisplay_D3D::SetRenderTarget(intptr_t uTexHandle, bool bPreserveTexture)
 {
+	FlushQuadBatch();
 	if (uTexHandle == 0) {
 		g_pd3dDevice->SetRenderState(D3DRS_CULLMODE, D3DCULL_CCW);
 
@@ -2081,12 +2492,22 @@ RageDisplay_D3D::SetRenderTarget(intptr_t uTexHandle, bool bPreserveTexture)
 		}
 		g_pCurrentRenderTarget = nullptr;
 		g_pd3dDevice->SetRenderState(D3DRS_SEPARATEALPHABLENDENABLE, 0u);
+		InvalidateStateCache(false, false);
 		return;
 	}
 
 	/* If we already had a render target, disable it. */
 	if (g_pCurrentRenderTarget != nullptr) {
 		SetRenderTarget(0, true);
+	}
+
+	FOREACH_ENUM(TextureUnit, tu)
+	{
+		if (m_abBoundTexValid[tu] && m_aBoundTex[tu] == uTexHandle) {
+			g_pd3dDevice->SetTexture(tu, nullptr);
+			m_aBoundTex[tu] = 0;
+			m_abBoundTexValid[tu] = true;
+		}
 	}
 
 	/* Enable the new render target. */
@@ -2110,6 +2531,7 @@ RageDisplay_D3D::SetRenderTarget(intptr_t uTexHandle, bool bPreserveTexture)
 
 	/* The render target may be in a different D3D context, so re-send
 	 * state.  Push matrixes affected by SetDefaultRenderStates. */
+	InvalidateStateCache(false, false);
 	DISPLAY->CameraPushMatrix();
 	SetDefaultRenderStates();
 	SetZWrite(true);
@@ -2130,7 +2552,8 @@ RageDisplay_D3D::SetRenderTarget(intptr_t uTexHandle, bool bPreserveTexture)
 			iBit |= D3DCLEAR_ZBUFFER;
 		}*/
 
-		if (FAILED(g_pd3dDevice->Clear(0, nullptr, iBit, D3DCOLOR_ARGB(0, 0, 0, 0), 1.0F, 0x00000000))) {
+		if (FAILED(g_pd3dDevice->Clear(
+			  0, nullptr, iBit, D3DCOLOR_ARGB(0, 0, 0, 0), 1.0F, 0x00000000))) {
 			Locator::getLogger()->warn("Failed to clear render target");
 		}
 	}
@@ -2139,7 +2562,12 @@ RageDisplay_D3D::SetRenderTarget(intptr_t uTexHandle, bool bPreserveTexture)
 void
 RageDisplay_D3D::SetSphereEnvironmentMapping(TextureUnit tu, bool b)
 {
+	if (tu < 0 || tu >= NUM_TextureUnit || g_bSphereMapping[tu] == b) {
+		return;
+	}
+	FlushQuadBatch();
 	g_bSphereMapping[tu] = b;
+	m_abTexMatrixValid[tu] = false;
 }
 
 void
