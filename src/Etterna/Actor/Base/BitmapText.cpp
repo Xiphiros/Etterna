@@ -14,6 +14,7 @@
 #include "Core/Services/Locator.hpp"
 
 #include <algorithm>
+#include <array>
 
 using std::clamp;
 using std::max;
@@ -832,8 +833,8 @@ BitmapText::DrawPrimitives()
 				else
 					iEnd = i + attr.length * 4;
 				iEnd = min(iEnd, m_aVertices.size());
-				std::vector<RageColor> temp_attr_diffuse(NUM_DIFFUSE_COLORS,
-													m_internalDiffuse);
+				std::array<RageColor, NUM_DIFFUSE_COLORS> temp_attr_diffuse;
+				temp_attr_diffuse.fill(m_internalDiffuse);
 				for (size_t c = 0; c < NUM_DIFFUSE_COLORS; ++c) {
 					temp_attr_diffuse[c] *= attr.diffuse[c];
 					if (m_mult_attrs_with_diffuse) {
