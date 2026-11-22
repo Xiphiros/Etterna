@@ -61,6 +61,8 @@
 #include "Etterna/Singletons/NetworkSyncManager.h"
 #include "Etterna/Singletons/StatsManager.h"
 
+#include <cmath>
+#include <cstdlib>
 #include <ctime>
 
 #ifdef _WIN32
@@ -968,11 +970,74 @@ MountAdditionalDirs(const std::string& sDirList,
 		FILEMAN->Mount("dir", dirs[i], sMountPoint);
 }
 
+static void
+SeedLuaBenchmarkPRNG(uint32_t uSeed)
+{
+	Lua* L = LUA->Get();
+	lua_getglobal(L, "math");
+	if (lua_istable(L, -1)) {
+		lua_getfield(L, -1, "randomseed");
+		if (lua_isfunction(L, -1)) {
+			lua_pushnumber(L, static_cast<double>(uSeed));
+			lua_call(L, 1, 0);
+		} else {
+			lua_pop(L, 1);
+		}
+	}
+	lua_pop(L, 1);
+	// Themes/_fallback/Scripts/00 init.lua aliases math.random and
+	// math.randomseed to MersenneTwister once theme scripts load.
+	lua_getglobal(L, "MersenneTwister");
+	if (lua_istable(L, -1)) {
+		lua_getfield(L, -1, "Seed");
+		if (lua_isfunction(L, -1)) {
+			lua_pushinteger(
+			  L, static_cast<lua_Integer>(static_cast<int32_t>(uSeed)));
+			lua_call(L, 1, 0);
+		} else {
+			lua_pop(L, 1);
+		}
+	}
+	lua_pop(L, 1);
+	LUA->Release(L);
+}
+
 int
 sm_main(int argc, char* argv[])
 {
-	g_RandomNumberGenerator.seed(static_cast<unsigned int>(time(nullptr)));
-	seed_lua_prng();
+	SetCommandlineArguments(argc, argv);
+
+	std::string sBenchPath;
+	const bool bBenchEnabled =
+	  GetCommandlineArgument("bench", &sBenchPath) && !sBenchPath.empty();
+	float fBenchDt = 1.0f / 240.0f;
+	uint32_t uBenchSeed = 20261121U;
+	if (bBenchEnabled) {
+		std::string sBenchDt;
+		if (GetCommandlineArgument("bench-dt", &sBenchDt) &&
+			!sBenchDt.empty()) {
+			char* pEnd = nullptr;
+			const float fParsedDt = std::strtof(sBenchDt.c_str(), &pEnd);
+			if (pEnd != sBenchDt.c_str() && *pEnd == '\0' &&
+				std::isfinite(fParsedDt) && fParsedDt >= 0.0f) {
+				fBenchDt = fParsedDt;
+			}
+		}
+		std::string sBenchSeed;
+		if (GetCommandlineArgument("bench-seed", &sBenchSeed) &&
+			!sBenchSeed.empty()) {
+			char* pEnd = nullptr;
+			const unsigned long uParsedSeed =
+			  std::strtoul(sBenchSeed.c_str(), &pEnd, 10);
+			if (pEnd != sBenchSeed.c_str() && *pEnd == '\0') {
+				uBenchSeed = static_cast<uint32_t>(uParsedSeed);
+			}
+		}
+		g_RandomNumberGenerator.seed(uBenchSeed);
+	} else {
+		g_RandomNumberGenerator.seed(static_cast<unsigned int>(time(nullptr)));
+		seed_lua_prng();
+	}
 
 	// Initialize Logging
     Locator::provide(std::make_unique<PlogLogger>());
@@ -998,9 +1063,10 @@ sm_main(int argc, char* argv[])
 	RageThreadRegister thread("Main thread");
 	RageException::SetCleanupHandler(HandleException);
 
-	SetCommandlineArguments(argc, argv);
-
 	LUA = new LuaManager;
+	if (bBenchEnabled) {
+		SeedLuaBenchmarkPRNG(uBenchSeed);
+	}
 
 	MESSAGEMAN = new MessageManager;
 
@@ -1051,11 +1117,15 @@ sm_main(int argc, char* argv[])
 	/* One of the above filesystems might contain files that affect preferences
 	 * (e.g. Data/Static.ini). Re-read preferences. */
 	PREFSMAN->ReadPrefsFromDisk();
+	if (bBenchEnabled) {
+		GameLoop::SetConstantUpdateDeltaSeconds(fBenchDt);
+		RageDisplay::ConfigureBenchmark(sBenchPath, fBenchDt, uBenchSeed);
+	}
 
-    // Setup options that require preference variables
-    // Used to be contents of ApplyLogPreferences
-    Core::Crash::setShouldUpload(PREFSMAN->m_bEnableCrashUpload);
-    Core::Platform::setConsoleEnabled(PREFSMAN->m_bShowLogOutput);
+	// Setup options that require preference variables
+	// Used to be contents of ApplyLogPreferences
+	Core::Crash::setShouldUpload(PREFSMAN->m_bEnableCrashUpload);
+	Core::Platform::setConsoleEnabled(PREFSMAN->m_bShowLogOutput);
 	Locator::getLogger()->info("Logging level {} (0 - TRACE | 5 - FATAL)",
 							   PREFSMAN->m_logging_level.Get());
 	Locator::getLogger()->setLogLevel(
