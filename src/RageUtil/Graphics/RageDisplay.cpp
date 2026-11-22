@@ -17,9 +17,23 @@
 #include "Etterna/Singletons/ScreenManager.h"
 #include "Etterna/Globals/GameLoop.h"
 
+#include <algorithm>
 #include <chrono>
-#include <thread>
+#include <cmath>
+#include <fstream>
+#include <numeric>
 #include <optional>
+#include <thread>
+
+#include "rapidjson/stringbuffer.h"
+#include "rapidjson/writer.h"
+
+namespace {
+bool s_bBenchConfigured = false;
+std::string s_sBenchOutputPath;
+float s_fBenchFixedDt = 0.0f;
+uint32_t s_uBenchSeed = 0;
+} // namespace
 
 #ifdef _WIN32
 #include "archutils/Win32/GraphicsWindow.h"
@@ -243,6 +257,9 @@ void
 RageDisplay::StatsAddVerts(int iNumVertsRendered)
 {
 	g_iVertsRenderedSinceLastCheck += iNumVertsRendered;
+	if (unlikely(IsBenchRecording()) && iNumVertsRendered > 0) {
+		m_BenchCounters.uVertices += static_cast<uint64_t>(iNumVertsRendered);
+	}
 }
 
 /* Draw a line as a quad.  GL_LINES with SmoothLines off can draw line
@@ -545,6 +562,13 @@ RageDisplay::RageDisplay()
 	g_ViewStack = MatrixStack();
 	g_WorldStack = MatrixStack();
 	g_TextureStack = MatrixStack();
+
+	if (s_bBenchConfigured) {
+		m_bBenchEnabled = true;
+		m_sBenchOutputPath = s_sBenchOutputPath;
+		m_fBenchFixedDt = s_fBenchFixedDt;
+		m_uBenchSeed = s_uBenchSeed;
+	}
 
 	// Register with Lua.
 	{
@@ -1364,6 +1388,288 @@ RageDisplay::DisplayDebugModeEnabled()
 	return *enabled;
 }
 
+namespace {
+struct BenchSummary
+{
+	double fMean{ 0.0 };
+	double fP50{ 0.0 };
+	double fP95{ 0.0 };
+	double fP99{ 0.0 };
+	double fMax{ 0.0 };
+};
+
+inline auto
+FiniteOrZero(double fVal) -> double
+{
+	return std::isfinite(fVal) ? fVal : 0.0;
+}
+
+auto
+PercentileSorted(const std::vector<double>& vSorted, double fQuantile) -> double
+{
+	if (vSorted.empty()) {
+		return 0.0;
+	}
+	if (vSorted.size() == 1) {
+		return FiniteOrZero(vSorted[0]);
+	}
+	const double fPos = fQuantile * static_cast<double>(vSorted.size() - 1);
+	const auto uLo = static_cast<size_t>(std::floor(fPos));
+	const auto uHi = static_cast<size_t>(std::ceil(fPos));
+	const double fFrac = fPos - static_cast<double>(uLo);
+	return FiniteOrZero(vSorted[uLo] + fFrac * (vSorted[uHi] - vSorted[uLo]));
+}
+
+auto
+ComputeBenchSummary(const std::vector<double>& vSamples) -> BenchSummary
+{
+	BenchSummary out;
+	if (vSamples.empty()) {
+		return out;
+	}
+	std::vector<double> vSorted = vSamples;
+	std::sort(vSorted.begin(), vSorted.end());
+	const double fSum = std::accumulate(vSorted.begin(), vSorted.end(), 0.0);
+	out.fMean = FiniteOrZero(fSum / static_cast<double>(vSorted.size()));
+	out.fP50 = PercentileSorted(vSorted, 0.50);
+	out.fP95 = PercentileSorted(vSorted, 0.95);
+	out.fP99 = PercentileSorted(vSorted, 0.99);
+	out.fMax = FiniteOrZero(vSorted.back());
+	return out;
+}
+
+void
+WriteBenchSummaryObject(rapidjson::Writer<rapidjson::StringBuffer>& writer,
+						const char* szKey,
+						const std::vector<double>& vSamples)
+{
+	const BenchSummary s = ComputeBenchSummary(vSamples);
+	writer.Key(szKey);
+	writer.StartObject();
+	writer.Key("mean");
+	writer.Double(s.fMean);
+	writer.Key("p50");
+	writer.Double(s.fP50);
+	writer.Key("p95");
+	writer.Double(s.fP95);
+	writer.Key("p99");
+	writer.Double(s.fP99);
+	writer.Key("max");
+	writer.Double(s.fMax);
+	writer.EndObject();
+}
+void
+WriteBenchArray(rapidjson::Writer<rapidjson::StringBuffer>& writer,
+				const char* szKey,
+				const std::vector<double>& vSamples)
+{
+	writer.Key(szKey);
+	writer.StartArray();
+	for (const double fVal : vSamples) {
+		writer.Double(FiniteOrZero(fVal));
+	}
+	writer.EndArray();
+}
+} // namespace
+
+void
+RageDisplay::ConfigureBenchmark(const std::string& sOutputPath,
+								float fFixedDeltaSeconds,
+								uint32_t uSeed)
+{
+	s_bBenchConfigured = true;
+	s_sBenchOutputPath = sOutputPath;
+	s_fBenchFixedDt = fFixedDeltaSeconds;
+	s_uBenchSeed = uSeed;
+
+	std::ofstream out(sOutputPath, std::ios::out | std::ios::trunc);
+	if (!out.is_open()) {
+		Locator::getLogger()->error(
+		  "Failed to open benchmark output path for truncation: {}",
+		  sOutputPath);
+	} else {
+		Locator::getLogger()->info(
+		  "Benchmark telemetry enabled: path={}, dt={}, seed={}",
+		  sOutputPath,
+		  fFixedDeltaSeconds,
+		  uSeed);
+	}
+
+	if (DISPLAY != nullptr) {
+		DISPLAY->m_bBenchEnabled = true;
+		DISPLAY->m_sBenchOutputPath = sOutputPath;
+		DISPLAY->m_fBenchFixedDt = fFixedDeltaSeconds;
+		DISPLAY->m_uBenchSeed = uSeed;
+	}
+}
+
+void
+RageDisplay::BenchBeginPhase(const std::string& sPhaseName, bool bIsWarmup)
+{
+	if (!m_bBenchEnabled) {
+		return;
+	}
+	m_sBenchPhaseName = sPhaseName;
+	m_bBenchPhaseActive = true;
+	m_bBenchPhaseWarmup = bIsWarmup;
+	m_bBenchRecording = !bIsWarmup;
+	m_BenchCounters = BenchCounters{};
+	m_vBenchFrameUs.clear();
+	m_vBenchCpuUpdateUs.clear();
+	m_vBenchCpuDrawUs.clear();
+	m_vBenchPresentUs.clear();
+	m_vBenchGpuUs.clear();
+	if (!bIsWarmup) {
+		m_vBenchFrameUs.reserve(512);
+		m_vBenchCpuUpdateUs.reserve(512);
+		m_vBenchCpuDrawUs.reserve(512);
+		m_vBenchPresentUs.reserve(512);
+		m_vBenchGpuUs.reserve(512);
+	}
+	OnBenchBeginPhase(bIsWarmup);
+}
+
+auto
+RageDisplay::BenchEndPhase() -> bool
+{
+	if (!m_bBenchEnabled || !m_bBenchPhaseActive) {
+		return false;
+	}
+	const bool bWasWarmup = m_bBenchPhaseWarmup;
+	m_bBenchRecording = false;
+	m_bBenchPhaseActive = false;
+	m_bBenchPhaseWarmup = false;
+	OnBenchEndPhase();
+	if (bWasWarmup) {
+		return true;
+	}
+
+	const uint64_t uFrames = static_cast<uint64_t>(m_vBenchFrameUs.size());
+	m_vBenchGpuUs.resize(m_vBenchFrameUs.size(), 0.0);
+	const double fInvFrames =
+	  uFrames > 0 ? (1.0 / static_cast<double>(uFrames)) : 0.0;
+
+	rapidjson::StringBuffer buffer;
+	rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
+	writer.StartObject();
+	writer.Key("phase");
+	writer.String(m_sBenchPhaseName.c_str(),
+				  static_cast<rapidjson::SizeType>(m_sBenchPhaseName.size()));
+	writer.Key("frames");
+	writer.Uint64(uFrames);
+	writer.Key("fixed_dt_s");
+	writer.Double(FiniteOrZero(m_fBenchFixedDt));
+	writer.Key("seed");
+	writer.Uint(m_uBenchSeed);
+
+	writer.Key("summary");
+	writer.StartObject();
+	WriteBenchSummaryObject(writer, "frame_us", m_vBenchFrameUs);
+	WriteBenchSummaryObject(writer, "cpu_update_us", m_vBenchCpuUpdateUs);
+	WriteBenchSummaryObject(writer, "cpu_draw_us", m_vBenchCpuDrawUs);
+	WriteBenchSummaryObject(writer, "present_us", m_vBenchPresentUs);
+	WriteBenchSummaryObject(writer, "gpu_us", m_vBenchGpuUs);
+	writer.EndObject();
+
+	WriteBenchArray(writer, "frame_us", m_vBenchFrameUs);
+	WriteBenchArray(writer, "cpu_update_us", m_vBenchCpuUpdateUs);
+	WriteBenchArray(writer, "cpu_draw_us", m_vBenchCpuDrawUs);
+	WriteBenchArray(writer, "present_us", m_vBenchPresentUs);
+	WriteBenchArray(writer, "gpu_us", m_vBenchGpuUs);
+
+	writer.Key("counters");
+	writer.StartObject();
+	auto writeCounter =
+	  [&](const char* szName, const char* szMeanName, uint64_t uVal) {
+		  writer.Key(szName);
+		  writer.Uint64(uVal);
+		  writer.Key(szMeanName);
+		  writer.Double(FiniteOrZero(static_cast<double>(uVal) * fInvFrames));
+	  };
+	writeCounter(
+	  "draw_calls", "draw_calls_per_frame", m_BenchCounters.uDrawCalls);
+	writeCounter("vertices", "vertices_per_frame", m_BenchCounters.uVertices);
+	writeCounter("gl_state_calls",
+				 "gl_state_calls_per_frame",
+				 m_BenchCounters.uGLStateCalls);
+	writeCounter("gl_get_queries",
+				 "gl_get_queries_per_frame",
+				 m_BenchCounters.uGLGetQueries);
+	writeCounter("matrix_uploads",
+				 "matrix_uploads_per_frame",
+				 m_BenchCounters.uMatrixUploads);
+	writeCounter(
+	  "tex_uploads", "tex_uploads_per_frame", m_BenchCounters.uTexUploads);
+	writeCounter("tex_upload_bytes",
+				 "tex_upload_bytes_per_frame",
+				 m_BenchCounters.uTexUploadBytes);
+	writeCounter("pot_padded_bytes",
+				 "pot_padded_bytes_per_frame",
+				 m_BenchCounters.uPotPaddedBytes);
+	writer.EndObject();
+	writer.EndObject();
+
+	std::ofstream out(m_sBenchOutputPath, std::ios::out | std::ios::app);
+	if (!out.is_open()) {
+		Locator::getLogger()->error(
+		  "Failed to append benchmark phase '{}' to {}",
+		  m_sBenchPhaseName,
+		  m_sBenchOutputPath);
+		return false;
+	}
+	out.write(buffer.GetString(),
+			  static_cast<std::streamsize>(buffer.GetSize()));
+	out.put('\n');
+	out.flush();
+	return out.good();
+}
+
+void
+RageDisplay::BenchRequestScreenshot(const std::string& sVfsPngPath)
+{
+	m_sPendingBenchScreenshot = sVfsPngPath;
+}
+
+auto
+RageDisplay::TakePendingBenchScreenshot() -> std::string
+{
+	std::string sOut = std::move(m_sPendingBenchScreenshot);
+	m_sPendingBenchScreenshot.clear();
+	return sOut;
+}
+
+void
+RageDisplay::BenchRecordFrameTimings(double fFrameUs,
+									 double fCpuDrawUs,
+									 double fPresentUs)
+{
+	if (!m_bBenchRecording) {
+		return;
+	}
+	m_vBenchFrameUs.push_back(fFrameUs);
+	m_vBenchCpuUpdateUs.push_back(m_fBenchLastUpdateUs);
+	m_vBenchCpuDrawUs.push_back(fCpuDrawUs);
+	m_vBenchPresentUs.push_back(fPresentUs);
+}
+
+void
+RageDisplay::BenchRecordGpuUs(double fGpuUs)
+{
+	m_vBenchGpuUs.push_back(fGpuUs);
+}
+
+void
+RageDisplay::BenchRecordTextureUpload(uint64_t uTotalBytes,
+									  uint64_t uPaddedBytes)
+{
+	if (!IsBenchRecording()) {
+		return;
+	}
+	++m_BenchCounters.uTexUploads;
+	m_BenchCounters.uTexUploadBytes += uTotalBytes;
+	m_BenchCounters.uPotPaddedBytes += uPaddedBytes;
+}
+
 // lua start
 #include "Etterna/Models/Lua/LuaBinding.h"
 
@@ -1450,6 +1756,35 @@ class LunaRageDisplay : public Luna<RageDisplay>
 		return 1;
 	}
 
+	static int IsBenchEnabled(T* p, lua_State* L)
+	{
+		lua_pushboolean(L, p->IsBenchEnabled());
+		return 1;
+	}
+
+	static int BenchBeginPhase(T* p, lua_State* L)
+	{
+		const std::string sPhaseName = SArg(1);
+		const bool bIsWarmup = lua_toboolean(L, 2) != 0;
+		p->BenchBeginPhase(sPhaseName, bIsWarmup);
+		lua_pushboolean(L, p->IsBenchEnabled());
+		return 1;
+	}
+
+	static int BenchEndPhase(T* p, lua_State* L)
+	{
+		lua_pushboolean(L, p->BenchEndPhase());
+		return 1;
+	}
+
+	static int BenchRequestScreenshot(T* p, lua_State* L)
+	{
+		const std::string sVfsPath = SArg(1);
+		p->BenchRequestScreenshot(sVfsPath);
+		lua_pushboolean(L, !sVfsPath.empty());
+		return 1;
+	}
+
 	LunaRageDisplay()
 	{
 		ADD_METHOD(GetDisplayWidth);
@@ -1462,6 +1797,10 @@ class LunaRageDisplay : public Luna<RageDisplay>
 		ADD_METHOD(SupportsRenderToTexture);
 		ADD_METHOD(SupportsFullscreenBorderlessWindow);
 		ADD_METHOD(MoveWindow);
+		ADD_METHOD(IsBenchEnabled);
+		ADD_METHOD(BenchBeginPhase);
+		ADD_METHOD(BenchEndPhase);
+		ADD_METHOD(BenchRequestScreenshot);
 	}
 };
 
