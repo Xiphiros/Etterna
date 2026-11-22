@@ -210,16 +210,16 @@ ActorMultiVertex::DrawPrimitives()
 {
 	Actor::SetGlobalRenderStates(); // set Actor-specified render states
 
-	DISPLAY->SetTexture(TextureUnit_1, _Texture->GetTexHandle());
-
-	Actor::SetTextureRenderStates();
-	DISPLAY->SetEffectMode(_EffectMode);
-
 	const bool bHasDiffusePass = m_pTempState->diffuse[0].a > 0;
 	const bool bHasGlowPass = m_pTempState->glow.a > 0;
 	if (!bHasDiffusePass && !bHasGlowPass) {
 		return;
 	}
+
+	DISPLAY->SetTexture(TextureUnit_1, _Texture->GetTexHandle());
+
+	Actor::SetTextureRenderStates();
+	DISPLAY->SetEffectMode(_EffectMode);
 	if (bHasDiffusePass && m_pTempState->diffuse[0] == RageColor(1, 1, 1, 1) &&
 		!bHasGlowPass) {
 		AMV_TempState = &AMV_current;
