@@ -6,6 +6,8 @@
 
 #include "RageUtil/Misc/RageInputDevice.h"
 
+#include <atomic>
+
 enum InputEventType
 {
 	// The device was just pressed.
@@ -86,14 +88,26 @@ class InputFilter
 	// cursor
 	void UpdateCursorLocation(float _fX, float _fY);
 	void UpdateMouseWheel(float _fZ);
-	float GetCursorX() { return m_MouseCoords.fX; }
-	float GetCursorY() { return m_MouseCoords.fY; }
-	float GetMouseWheel() { return m_MouseCoords.fZ; }
+	float GetCursorX() const
+	{
+		return m_fCursorX.load(std::memory_order_relaxed);
+	}
+	float GetCursorY() const
+	{
+		return m_fCursorY.load(std::memory_order_relaxed);
+	}
+	float GetMouseWheel() const
+	{
+		return m_fMouseWheel.load(std::memory_order_relaxed);
+	}
 
 	// Lua
 	void PushSelf(lua_State* L);
 
-	bool IsCapsLockEnabled() { return capsLockEnabled; }
+	bool IsCapsLockEnabled() const
+	{
+		return capsLockEnabled.load(std::memory_order_relaxed);
+	}
 
   private:
 	void CheckButtonChange(ButtonState& bs,
@@ -104,12 +118,14 @@ class InputFilter
 
 	std::vector<InputEvent> queue;
 	RageMutex* queuemutex;
-	MouseCoordinates m_MouseCoords;
+	std::atomic<float> m_fCursorX{ 0.0f };
+	std::atomic<float> m_fCursorY{ 0.0f };
+	std::atomic<float> m_fMouseWheel{ 0.0f };
 
 	InputFilter(const InputFilter& rhs);
 	InputFilter& operator=(const InputFilter& rhs);
 
-	bool capsLockEnabled = false;
+	std::atomic<bool> capsLockEnabled{ false };
 };
 
 extern InputFilter*
