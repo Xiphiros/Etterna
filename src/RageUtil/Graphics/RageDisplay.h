@@ -592,6 +592,40 @@ protected:
 						 unsigned Amask,
 						 bool realtime = false) -> RagePixelFormat;
 
+	// Benchmark telemetry (--bench)
+	static void ConfigureBenchmark(const std::string& sOutputPath,
+								   float fFixedDeltaSeconds,
+								   uint32_t uSeed);
+	[[nodiscard]] auto IsBenchEnabled() const -> bool
+	{
+		return m_bBenchEnabled;
+	}
+	[[nodiscard]] auto IsBenchRecording() const -> bool
+	{
+		return m_bBenchRecording && !m_bBenchSuppressCounters;
+	}
+	void BenchBeginPhase(const std::string& sPhaseName, bool bIsWarmup);
+	auto BenchEndPhase() -> bool;
+	void BenchRequestScreenshot(const std::string& sVfsPngPath);
+	[[nodiscard]] auto HasPendingBenchScreenshot() const -> bool
+	{
+		return !m_sPendingBenchScreenshot.empty();
+	}
+	auto TakePendingBenchScreenshot() -> std::string;
+	void BenchSetLastUpdateUs(double fUpdateUs)
+	{
+		m_fBenchLastUpdateUs = fUpdateUs;
+	}
+	void BenchRecordFrameTimings(double fFrameUs,
+								 double fCpuDrawUs,
+								 double fPresentUs);
+	void BenchRecordGpuUs(double fGpuUs);
+	void BenchIncDrawCalls() { ++m_BenchCounters.uDrawCalls; }
+	void BenchIncGLStateCalls() { ++m_BenchCounters.uGLStateCalls; }
+	void BenchIncGLGetQueries() { ++m_BenchCounters.uGLGetQueries; }
+	void BenchIncMatrixUploads() { ++m_BenchCounters.uMatrixUploads; }
+	void BenchRecordTextureUpload(uint64_t uTotalBytes, uint64_t uPaddedBytes);
+
 	// Lua
 	void PushSelf(lua_State* L);
 
@@ -629,6 +663,44 @@ protected:
 
 	void FrameLimitBeforeVsync();
 	void FrameLimitAfterVsync(int iFPS);
+
+	virtual void OnBenchBeginPhase(bool /* bIsWarmup */) {}
+	virtual void OnBenchEndPhase() {}
+	void SetBenchSuppressCounters(bool bSuppress)
+	{
+		m_bBenchSuppressCounters = bSuppress;
+	}
+
+  private:
+	struct BenchCounters
+	{
+		uint64_t uDrawCalls{ 0 };
+		uint64_t uVertices{ 0 };
+		uint64_t uGLStateCalls{ 0 };
+		uint64_t uGLGetQueries{ 0 };
+		uint64_t uMatrixUploads{ 0 };
+		uint64_t uTexUploads{ 0 };
+		uint64_t uTexUploadBytes{ 0 };
+		uint64_t uPotPaddedBytes{ 0 };
+	};
+
+	bool m_bBenchEnabled{ false };
+	bool m_bBenchPhaseActive{ false };
+	bool m_bBenchPhaseWarmup{ false };
+	bool m_bBenchRecording{ false };
+	bool m_bBenchSuppressCounters{ false };
+	std::string m_sBenchOutputPath;
+	float m_fBenchFixedDt{ 0.0f };
+	uint32_t m_uBenchSeed{ 0 };
+	std::string m_sBenchPhaseName;
+	double m_fBenchLastUpdateUs{ 0.0 };
+	BenchCounters m_BenchCounters{};
+	std::vector<double> m_vBenchFrameUs;
+	std::vector<double> m_vBenchCpuUpdateUs;
+	std::vector<double> m_vBenchCpuDrawUs;
+	std::vector<double> m_vBenchPresentUs;
+	std::vector<double> m_vBenchGpuUs;
+	std::string m_sPendingBenchScreenshot;
 };
 
 extern RageDisplay*
