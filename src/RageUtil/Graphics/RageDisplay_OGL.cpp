@@ -1040,11 +1040,9 @@ RageDisplay_Legacy::InvalidateStateCache(bool bFlushBatch,
 		m_iCelShadedStage = 0;
 		m_CachedPolygonMode = POLYGON_FILL;
 	}
-	m_bClientVertexEnabled = false;
-	m_bClientColorEnabled = false;
-	m_bClientTex0Enabled = false;
-	m_bClientTex1Enabled = true;
-	m_bClientNormalEnabled = true;
+	m_bClientStateValid = false;
+	m_bClientTex1Enabled = false;
+	m_bClientNormalEnabled = false;
 	m_bProjUploadValid = false;
 	m_bModelViewUploadValid = false;
 	m_bModelViewIsIdentity = false;
@@ -1193,7 +1191,9 @@ RageDisplay_Legacy::EndFrame()
 	if (UseOffscreenRenderTarget()) {
 		FlushQuadBatch();
 		offscreenRenderTarget->FinishRenderingTo();
-		InvalidateStateCache(false, false);
+		if (!GLEW_EXT_framebuffer_object) {
+			InvalidateStateCache(false, false);
+		}
 		Sprite fullscreenSprite;
 		// We've got a hold of this, don't want sprite deleting it when
 		// it's deleted
@@ -1449,6 +1449,8 @@ RageDisplay_Legacy::GetTexture(intptr_t iTexture)
 	SetTextureUnit(TextureUnit_1);
 	BenchCountStateCall();
 	glBindTexture(GL_TEXTURE_2D, iTexture);
+	m_auBoundTex[TextureUnit_1] = static_cast<unsigned int>(iTexture);
+	m_abTexUnitStateValid[TextureUnit_1] = false;
 	GLint iHeight, iWidth, iAlphaBits;
 	BenchCountGetQuery();
 	glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &iHeight);
@@ -1475,7 +1477,6 @@ RageDisplay_Legacy::GetTexture(intptr_t iTexture)
 				  GL_UNSIGNED_BYTE,
 				  pImage->pixels);
 	AssertNoGLError();
-	InvalidateStateCache(false, false);
 
 	return pImage;
 }
@@ -1493,16 +1494,16 @@ RageDisplay_Legacy::SetupVertices(const RageSpriteVertex v[], int iNumVerts)
 		return;
 	}
 	constexpr GLsizei kStride = sizeof(RageSpriteVertex);
-	if (!m_bClientVertexEnabled) {
+	if (!m_bClientStateValid) {
+		if (GLEW_ARB_multitexture) {
+			glClientActiveTextureARB(GL_TEXTURE0_ARB);
+		}
 		glEnableClientState(GL_VERTEX_ARRAY);
-		m_bClientVertexEnabled = true;
+		glEnableClientState(GL_COLOR_ARRAY);
+		glEnableClientState(GL_TEXTURE_COORD_ARRAY);
 	}
 	glVertexPointer(3, GL_FLOAT, kStride, &v[0].p);
 
-	if (!m_bClientColorEnabled) {
-		glEnableClientState(GL_COLOR_ARRAY);
-		m_bClientColorEnabled = true;
-	}
 	if (GLEW_ARB_vertex_array_bgra || GLEW_EXT_vertex_array_bgra) {
 		glColorPointer(GL_BGRA, GL_UNSIGNED_BYTE, kStride, &v[0].c);
 	} else {
@@ -1516,23 +1517,19 @@ RageDisplay_Legacy::SetupVertices(const RageSpriteVertex v[], int iNumVerts)
 		glColorPointer(4, GL_UNSIGNED_BYTE, 0, m_vFallbackRGBA.data());
 	}
 
-	if (!m_bClientTex0Enabled) {
-		glEnableClientState(GL_TEXTURE_COORD_ARRAY);
-		m_bClientTex0Enabled = true;
-	}
 	glTexCoordPointer(2, GL_FLOAT, kStride, &v[0].t);
 
 	if (GLEW_ARB_multitexture) {
 		const bool bNeedTex1 = (m_uEnabledTexUnitMask & ~1U) != 0;
 		if (bNeedTex1) {
 			glClientActiveTextureARB(GL_TEXTURE1_ARB);
-			if (!m_bClientTex1Enabled) {
+			if (!m_bClientStateValid || !m_bClientTex1Enabled) {
 				glEnableClientState(GL_TEXTURE_COORD_ARRAY);
 				m_bClientTex1Enabled = true;
 			}
 			glTexCoordPointer(2, GL_FLOAT, kStride, &v[0].t);
 			glClientActiveTextureARB(GL_TEXTURE0_ARB);
-		} else if (m_bClientTex1Enabled) {
+		} else if (!m_bClientStateValid || m_bClientTex1Enabled) {
 			glClientActiveTextureARB(GL_TEXTURE1_ARB);
 			glDisableClientState(GL_TEXTURE_COORD_ARRAY);
 			glClientActiveTextureARB(GL_TEXTURE0_ARB);
@@ -1543,15 +1540,16 @@ RageDisplay_Legacy::SetupVertices(const RageSpriteVertex v[], int iNumVerts)
 	const bool bNeedNormal =
 	  m_bCachedLighting || m_uSphereMapMask != 0 || m_iCelShadedStage != 0;
 	if (bNeedNormal) {
-		if (!m_bClientNormalEnabled) {
+		if (!m_bClientStateValid || !m_bClientNormalEnabled) {
 			glEnableClientState(GL_NORMAL_ARRAY);
 			m_bClientNormalEnabled = true;
 		}
 		glNormalPointer(GL_FLOAT, kStride, &v[0].n);
-	} else if (m_bClientNormalEnabled) {
+	} else if (!m_bClientStateValid || m_bClientNormalEnabled) {
 		glDisableClientState(GL_NORMAL_ARRAY);
 		m_bClientNormalEnabled = false;
 	}
+	m_bClientStateValid = true;
 }
 
 void
@@ -1594,6 +1592,7 @@ RageDisplay_Legacy::SendCurrentMatrices()
 
 	const uint64_t uTexRev = GetTextureRev();
 	if (!m_bTexUploadValid || m_uUploadedTexRev != uTexRev) {
+		SetTextureUnit(TextureUnit_1);
 		glMatrixMode(GL_TEXTURE);
 		BenchCountMatrixUpload();
 		glLoadMatrixf(static_cast<const float*>(*GetTextureTop()));
@@ -2039,6 +2038,9 @@ RageCompiledGeometryHWOGL::Draw(int iMeshIndex) const
 		glDisableVertexAttribArrayARB(g_iAttribTextureMatrixScale);
 		BenchCountStateCall();
 		glUseProgramObjectARB(0);
+		if (auto* pMutOGL = static_cast<RageDisplay_Legacy*>(DISPLAY)) {
+			pMutOGL->OnShaderProgramReset();
+		}
 	}
 }
 
@@ -2095,6 +2097,7 @@ RageDisplay_Legacy::FlushQuadBatch()
 	if (!m_bTexUploadValid || !m_bTexMatrixUploadedIsIdentity) {
 		RageMatrix identity;
 		RageMatrixIdentity(&identity);
+		SetTextureUnit(TextureUnit_1);
 		glMatrixMode(GL_TEXTURE);
 		BenchCountMatrixUpload();
 		glLoadMatrixf(static_cast<const float*>(identity));
@@ -2320,7 +2323,10 @@ RageDisplay_Legacy::DrawCompiledGeometryInternal(const RageCompiledGeometry* p,
 	SendCurrentMatrices();
 
 	p->Draw(iMeshIndex);
-	InvalidateStateCache(false, false);
+	g_bHardwareVBOBound = true;
+	m_bClientStateValid = false;
+	m_bTexMatrixUploadedIsIdentity = false;
+	m_bTexUploadValid = false;
 }
 
 void
@@ -2464,10 +2470,10 @@ RageDisplay_Legacy::SetTexture(TextureUnit tu, intptr_t iTexture)
 		}
 	}
 
+	FlushQuadBatch();
+
 	if (!SetTextureUnit(tu))
 		return;
-
-	FlushQuadBatch();
 
 	if (bEnable) {
 		if (!m_abTexUnitStateValid[tu] || !m_abTex2DEnabled[tu]) {
@@ -2501,10 +2507,10 @@ RageDisplay_Legacy::SetTextureMode(TextureUnit tu, TextureMode tm)
 	if (m_abTexModeValid[tu] && m_aCachedTexMode[tu] == tm)
 		return;
 
+	FlushQuadBatch();
+
 	if (!SetTextureUnit(tu))
 		return;
-
-	FlushQuadBatch();
 
 	switch (tm) {
 		case TextureMode_Modulate:
@@ -2570,11 +2576,12 @@ RageDisplay_Legacy::SetTextureFiltering(TextureUnit tu, bool b)
 	if (static_cast<int>(tu) >= NUM_TextureUnit ||
 		static_cast<int>(tu) >= g_iMaxTextureUnits)
 		return;
-	if (m_abTexUnitStateValid[tu] && !m_abTex2DEnabled[tu])
+	if (!m_abTexUnitStateValid[tu] || !m_abTex2DEnabled[tu] ||
+		m_auBoundTex[tu] == 0)
 		return;
 
 	const unsigned int uTex = m_auBoundTex[tu];
-	auto it = uTex != 0 ? m_mapTexInfo.find(uTex) : m_mapTexInfo.end();
+	auto it = m_mapTexInfo.find(uTex);
 	const bool bHasMipMaps = it != m_mapTexInfo.end() && it->second.bHasMipMaps;
 	const GLint iMagFilter = b ? GL_LINEAR : GL_NEAREST;
 	GLint iMinFilter = GL_NEAREST;
@@ -2590,9 +2597,9 @@ RageDisplay_Legacy::SetTextureFiltering(TextureUnit tu, bool b)
 		it->second.minFilter == iMinFilter) {
 		return;
 	}
+	FlushQuadBatch();
 	if (!SetTextureUnit(tu))
 		return;
-	FlushQuadBatch();
 
 	if (it == m_mapTexInfo.end() || it->second.magFilter != iMagFilter) {
 		BenchCountStateCall();
@@ -2647,6 +2654,7 @@ RageDisplay_Legacy::SetEffectMode(EffectMode effect)
 	m_CachedEffectMode = effect;
 	m_iCachedEffectTexWidth = iTexWidth;
 	m_bEffectModeValid = true;
+	m_iCelShadedStage = 0;
 	if (hShader == 0)
 		return;
 	BenchCountStateCall();
@@ -2872,20 +2880,21 @@ RageDisplay_Legacy::SetTextureWrapping(TextureUnit tu, bool b)
 	if (static_cast<int>(tu) >= NUM_TextureUnit ||
 		static_cast<int>(tu) >= g_iMaxTextureUnits)
 		return;
-	if (m_abTexUnitStateValid[tu] && !m_abTex2DEnabled[tu])
+	if (!m_abTexUnitStateValid[tu] || !m_abTex2DEnabled[tu] ||
+		m_auBoundTex[tu] == 0)
 		return;
 
 	const GLint mode = b ? GL_REPEAT : GL_CLAMP_TO_EDGE;
 	const unsigned int uTex = m_auBoundTex[tu];
-	auto it = uTex != 0 ? m_mapTexInfo.find(uTex) : m_mapTexInfo.end();
+	auto it = m_mapTexInfo.find(uTex);
 	if (it != m_mapTexInfo.end() && it->second.wrapS == mode &&
 		it->second.wrapT == mode) {
 		return;
 	}
 
+	FlushQuadBatch();
 	if (!SetTextureUnit(tu))
 		return;
-	FlushQuadBatch();
 
 	if (it == m_mapTexInfo.end() || it->second.wrapS != mode) {
 		BenchCountStateCall();
@@ -3174,6 +3183,7 @@ RageDisplay_Legacy::CreateTexture(RagePixelFormat pixfmt,
 
 	/* If the image is paletted, but we're not sending it to a paletted image,
 	 * set up glPixelMap. */
+	FlushQuadBatch();
 	SetPixelMapForSurface(glImageFormat, glTexFormat, pImg->fmt.palette);
 
 	// HACK:  OpenGL 1.2 types aren't available in GLU 1.3.  Don't call GLU for
@@ -3198,7 +3208,6 @@ RageDisplay_Legacy::CreateTexture(RagePixelFormat pixfmt,
 		}
 	}
 
-	FlushQuadBatch();
 	SetTextureUnit(TextureUnit_1);
 
 	// allocate OpenGL texture resource
@@ -3207,8 +3216,7 @@ RageDisplay_Legacy::CreateTexture(RagePixelFormat pixfmt,
 	ASSERT(iTexHandle != 0);
 
 	const auto uTex = static_cast<unsigned int>(iTexHandle);
-	const bool bUseNPOT =
-	  SupportsNonPowerOfTwoTextures() && pImg->pixels != nullptr;
+	const bool bUseNPOT = SupportsNonPowerOfTwoTextures();
 	const int iTexWidth = bUseNPOT ? pImg->w : power_of_two(pImg->w);
 	const int iTexHeight = bUseNPOT ? pImg->h : power_of_two(pImg->h);
 	const bool bHasMipMaps = bGenerateMipMaps && pImg->pixels != nullptr &&
@@ -3287,6 +3295,8 @@ RageDisplay_Legacy::CreateTexture(RagePixelFormat pixfmt,
 
 	DebugFlushGLErrors();
 
+	const bool bSubUpload = pImg->pixels != nullptr &&
+							(pImg->w != iTexWidth || pImg->h != iTexHeight);
 	if (bGenerateMipMaps) {
 		// We are not allowing creating mipmapped textures with empty buffers for now
 		// TODO: Consider crashing when that happens or if we can/want to allow it
@@ -3300,7 +3310,18 @@ RageDisplay_Legacy::CreateTexture(RagePixelFormat pixfmt,
 						 0,
 						 glImageFormat,
 						 glImageType,
-						 pImg->pixels);
+						 bSubUpload ? nullptr : pImg->pixels);
+			if (bSubUpload) {
+				glTexSubImage2D(GL_TEXTURE_2D,
+								0,
+								0,
+								0,
+								pImg->w,
+								pImg->h,
+								glImageFormat,
+								glImageType,
+								pImg->pixels);
+			}
 
 			if (bHasMipMaps) {
 				glGenerateMipmap(GL_TEXTURE_2D);
@@ -3322,7 +3343,18 @@ RageDisplay_Legacy::CreateTexture(RagePixelFormat pixfmt,
 					 0,
 					 glImageFormat,
 					 glImageType,
-					 pImg->pixels);
+					 bSubUpload ? nullptr : pImg->pixels);
+		if (bSubUpload) {
+			glTexSubImage2D(GL_TEXTURE_2D,
+							0,
+							0,
+							0,
+							pImg->w,
+							pImg->h,
+							glImageFormat,
+							glImageType,
+							pImg->pixels);
+		}
 		DebugAssertNoGLError();
 	}
 
@@ -3815,6 +3847,7 @@ RageDisplay_Legacy::CreateRenderTarget(const RenderTargetParam& param,
 									   int& iTextureHeightOut)
 {
 	FlushQuadBatch();
+	SetTextureUnit(TextureUnit_1);
 
 	RenderTarget* pTarget;
 	if (GLEW_EXT_framebuffer_object)
@@ -3825,6 +3858,8 @@ RageDisplay_Legacy::CreateRenderTarget(const RenderTargetParam& param,
 	intptr_t iTexture = 0;
 	if (pTarget) {
 		pTarget->Create(param, iTextureWidthOut, iTextureHeightOut);
+		m_abTexUnitStateValid[TextureUnit_1] = false;
+		m_auBoundTex[TextureUnit_1] = 0;
 
 		iTexture = pTarget->GetTexture();
 
@@ -3842,7 +3877,9 @@ RageDisplay_Legacy::CreateRenderTarget(const RenderTargetParam& param,
 						  GL_CLAMP_TO_EDGE, GL_CLAMP_TO_EDGE };
 		}
 	}
-	InvalidateStateCache(false, false);
+	if (!GLEW_EXT_framebuffer_object) {
+		InvalidateStateCache(false, false);
+	}
 
 	return iTexture;
 }
@@ -3877,7 +3914,9 @@ RageDisplay_Legacy::SetRenderTarget(intptr_t iTexture, bool bPreserveTexture)
 		if (g_pCurrentRenderTarget != nullptr)
 			g_pCurrentRenderTarget->FinishRenderingTo();
 		g_pCurrentRenderTarget = nullptr;
-		InvalidateStateCache(false, false);
+		if (!GLEW_EXT_framebuffer_object) {
+			InvalidateStateCache(false, false);
+		}
 		return;
 	}
 
@@ -3902,7 +3941,9 @@ RageDisplay_Legacy::SetRenderTarget(intptr_t iTexture, bool bPreserveTexture)
 
 	/* The render target may be in a different OpenGL context, so re-send
 	 * state.  Push matrixes affected by SetDefaultRenderStates. */
-	InvalidateStateCache(false, false);
+	if (!GLEW_EXT_framebuffer_object) {
+		InvalidateStateCache(false, false);
+	}
 	DISPLAY->CameraPushMatrix();
 	SetDefaultRenderStates();
 
@@ -3986,10 +4027,6 @@ RageDisplay_Legacy::GetTextureDiagnostics(unsigned iTexture) const
 	return std::string();
 }
 
-/*
- * XXX: Things like this only have to be set once per context - making
- * SetDefault call These kinds of functions is wasteful. -Colby
- */
 void
 RageDisplay_Legacy::SetAlphaTest(bool b)
 {
@@ -4073,10 +4110,10 @@ RageDisplay_Legacy::SetSphereEnvironmentMapping(TextureUnit tu, bool b)
 	const uint32_t uBit = 1U << static_cast<uint32_t>(tu);
 	if (((m_uSphereMapMask & uBit) != 0) == b)
 		return;
+	FlushQuadBatch();
+
 	if (!SetTextureUnit(tu))
 		return;
-
-	FlushQuadBatch();
 	if (b) {
 		glTexGeni(GL_S, GL_TEXTURE_GEN_MODE, GL_SPHERE_MAP);
 		glTexGeni(GL_T, GL_TEXTURE_GEN_MODE, GL_SPHERE_MAP);
