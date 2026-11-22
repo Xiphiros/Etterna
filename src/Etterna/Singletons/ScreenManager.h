@@ -19,6 +19,8 @@ class ScreenManager
 
 	// pass these messages along to the current state
 	void Update(float fDeltaTime);
+	void UpdateBeforeInput();
+	[[nodiscard]] auto CanProcessInputBeforeUpdate() const -> bool;
 	void Draw();
 	void Input(const InputEventPlus& input);
 
