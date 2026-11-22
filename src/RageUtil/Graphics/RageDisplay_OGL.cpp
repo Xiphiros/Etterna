@@ -5,10 +5,12 @@
 #include "Etterna/Models/Misc/LocalizedString.h"
 #include "Etterna/Singletons/PrefsManager.h"
 #include "RageUtil/File/RageFile.h"
+#include "RageUtil/File/RageFileManager.h"
 #include "Core/Services/Locator.hpp"
 #include "RageUtil/Misc/RageMath.h"
 #include "RageSurface.h"
 #include "RageSurfaceUtils.h"
+#include "RageSurface_Save_PNG.h"
 #include "RageTextureManager.h"
 #include "RageUtil/Misc/RageTypes.h"
 #include "RageUtil/Utils/RageUtil.h"
@@ -36,6 +38,62 @@
 using std::max;
 using std::min;
 using namespace RageDisplay_Legacy_Helpers;
+
+namespace {
+inline void
+BenchCountDrawCall()
+{
+	if (unlikely(DISPLAY != nullptr && DISPLAY->IsBenchRecording())) {
+		DISPLAY->BenchIncDrawCalls();
+	}
+}
+
+inline void
+BenchCountStateCall()
+{
+	if (unlikely(DISPLAY != nullptr && DISPLAY->IsBenchRecording())) {
+		DISPLAY->BenchIncGLStateCalls();
+	}
+}
+
+inline void
+BenchCountGetQuery()
+{
+	if (unlikely(DISPLAY != nullptr && DISPLAY->IsBenchRecording())) {
+		DISPLAY->BenchIncGLGetQueries();
+	}
+}
+
+inline void
+BenchCountMatrixUpload()
+{
+	if (unlikely(DISPLAY != nullptr && DISPLAY->IsBenchRecording())) {
+		DISPLAY->BenchIncMatrixUploads();
+	}
+}
+
+inline auto
+SupportsGpuTimerQuery() -> bool
+{
+	return (GLEW_ARB_timer_query || GLEW_EXT_timer_query) &&
+		   glGenQueries != nullptr && glDeleteQueries != nullptr &&
+		   glBeginQuery != nullptr && glEndQuery != nullptr &&
+		   glGetQueryObjectuiv != nullptr;
+}
+
+inline auto
+ReadGpuQueryUs(GLuint uQuery) -> double
+{
+	if (GLEW_ARB_timer_query && glGetQueryObjectui64v != nullptr) {
+		GLuint64 uElapsedNs = 0;
+		glGetQueryObjectui64v(uQuery, GL_QUERY_RESULT, &uElapsedNs);
+		return static_cast<double>(uElapsedNs) * 1e-3;
+	}
+	GLuint uElapsedNs = 0;
+	glGetQueryObjectuiv(uQuery, GL_QUERY_RESULT, &uElapsedNs);
+	return static_cast<double>(uElapsedNs) * 1e-3;
+}
+} // namespace
 
 //
 // Globals
@@ -569,7 +627,9 @@ RageDisplay_Legacy::Init(VideoModeParams&& p,
 
 	/* Log this, so if people complain that the radar looks bad on their
 	 * system we can compare them: */
+	BenchCountGetQuery();
 	glGetFloatv(GL_LINE_WIDTH_RANGE, g_line_range);
+	BenchCountGetQuery();
 	glGetFloatv(GL_POINT_SIZE_RANGE, g_point_range);
 
 	return std::string();
@@ -577,6 +637,14 @@ RageDisplay_Legacy::Init(VideoModeParams&& p,
 
 RageDisplay_Legacy::~RageDisplay_Legacy()
 {
+	if (m_bGpuQueryActive && glEndQuery != nullptr) {
+		glEndQuery(GL_TIME_ELAPSED);
+		m_bGpuQueryActive = false;
+	}
+	if (m_bGpuTimerQueriesInitialized && glDeleteQueries != nullptr) {
+		glDeleteQueries(kGpuTimerRingSize, m_aGpuTimerQueries);
+		m_bGpuTimerQueriesInitialized = false;
+	}
 	delete g_pWind;
 }
 
@@ -863,13 +931,108 @@ int
 RageDisplay_Legacy::GetMaxTextureSize() const
 {
 	GLint size;
+	BenchCountGetQuery();
 	glGetIntegerv(GL_MAX_TEXTURE_SIZE, &size);
 	return size;
+}
+
+void
+RageDisplay_Legacy::OnContextInvalidated()
+{
+	// Context recreation destroys GL objects owned by the previous context.
+	std::fill(std::begin(m_aGpuTimerQueries), std::end(m_aGpuTimerQueries), 0U);
+	m_bGpuTimerQueriesInitialized = false;
+	m_uGpuRingHead = 0;
+	m_uGpuRingTail = 0;
+	m_uGpuRingCount = 0;
+	m_bGpuQueryActive = false;
+}
+
+void
+RageDisplay_Legacy::HarvestAvailableGpuQueries()
+{
+	while (m_uGpuRingCount > 0) {
+		GLuint uAvailable = GL_FALSE;
+		const GLuint uQuery = m_aGpuTimerQueries[m_uGpuRingHead];
+		glGetQueryObjectuiv(uQuery, GL_QUERY_RESULT_AVAILABLE, &uAvailable);
+		if (!uAvailable) {
+			break;
+		}
+		BenchRecordGpuUs(ReadGpuQueryUs(uQuery));
+		m_uGpuRingHead = (m_uGpuRingHead + 1) % kGpuTimerRingSize;
+		--m_uGpuRingCount;
+	}
+}
+
+void
+RageDisplay_Legacy::DrainAllGpuQueries()
+{
+	while (m_uGpuRingCount > 0) {
+		const GLuint uQuery = m_aGpuTimerQueries[m_uGpuRingHead];
+		BenchRecordGpuUs(ReadGpuQueryUs(uQuery));
+		m_uGpuRingHead = (m_uGpuRingHead + 1) % kGpuTimerRingSize;
+		--m_uGpuRingCount;
+	}
+}
+
+void
+RageDisplay_Legacy::OnBenchBeginPhase(bool bIsWarmup)
+{
+	if (m_bGpuQueryActive && glEndQuery != nullptr) {
+		glEndQuery(GL_TIME_ELAPSED);
+		m_bGpuQueryActive = false;
+	}
+	m_uGpuRingHead = 0;
+	m_uGpuRingTail = 0;
+	m_uGpuRingCount = 0;
+	m_bBenchFrameActive = false;
+	m_bHasPrevFrameEnd = false;
+	if (!bIsWarmup && !m_bGpuTimerQueriesInitialized &&
+		SupportsGpuTimerQuery()) {
+		glGenQueries(kGpuTimerRingSize, m_aGpuTimerQueries);
+		m_bGpuTimerQueriesInitialized = true;
+	}
+}
+
+void
+RageDisplay_Legacy::OnBenchEndPhase()
+{
+	if (m_bGpuQueryActive && glEndQuery != nullptr) {
+		glEndQuery(GL_TIME_ELAPSED);
+		m_bGpuQueryActive = false;
+	}
+	m_bBenchFrameActive = false;
+	if (m_bGpuTimerQueriesInitialized) {
+		DrainAllGpuQueries();
+	}
 }
 
 bool
 RageDisplay_Legacy::BeginFrame()
 {
+	const bool bRecording = IsBenchRecording();
+	m_bBenchFrameActive = bRecording;
+	if (unlikely(bRecording)) {
+		if (!m_bGpuTimerQueriesInitialized && SupportsGpuTimerQuery()) {
+			glGenQueries(kGpuTimerRingSize, m_aGpuTimerQueries);
+			m_bGpuTimerQueriesInitialized = true;
+		}
+		if (m_bGpuTimerQueriesInitialized) {
+			HarvestAvailableGpuQueries();
+			if (m_uGpuRingCount == kGpuTimerRingSize) {
+				const GLuint uOldest = m_aGpuTimerQueries[m_uGpuRingHead];
+				BenchRecordGpuUs(ReadGpuQueryUs(uOldest));
+				m_uGpuRingHead = (m_uGpuRingHead + 1) % kGpuTimerRingSize;
+				--m_uGpuRingCount;
+			}
+		}
+		m_BenchDrawStart = std::chrono::steady_clock::now();
+		if (m_bGpuTimerQueriesInitialized) {
+			glBeginQuery(GL_TIME_ELAPSED, m_aGpuTimerQueries[m_uGpuRingTail]);
+			m_bGpuQueryActive = true;
+		}
+	}
+
 	/* We do this in here, rather than ResolutionChanged, or we won't update the
 	 * viewport for the concurrent rendering context. */
 
@@ -911,6 +1074,28 @@ RageDisplay_Legacy::EndFrame()
 		CameraPopMatrix();
 	}
 
+	const bool bRecordFrame = m_bBenchFrameActive && IsBenchRecording();
+	std::chrono::steady_clock::time_point benchDrawEnd{};
+	if (unlikely(bRecordFrame)) {
+		benchDrawEnd = std::chrono::steady_clock::now();
+	}
+	const bool bHadGpuQuery = m_bGpuQueryActive;
+	if (unlikely(m_bGpuQueryActive)) {
+		glEndQuery(GL_TIME_ELAPSED);
+		m_bGpuQueryActive = false;
+	}
+	if (unlikely(bRecordFrame)) {
+		if (bHadGpuQuery) {
+			m_uGpuRingTail = (m_uGpuRingTail + 1) % kGpuTimerRingSize;
+			++m_uGpuRingCount;
+		} else {
+			BenchRecordGpuUs(0.0);
+		}
+	}
+	if (unlikely(HasPendingBenchScreenshot())) {
+		CaptureBenchScreenshot(TakePendingBenchScreenshot());
+	}
+
 	FrameLimitBeforeVsync();
 	const auto beforePresent = std::chrono::steady_clock::now();
 	g_pWind->SwapBuffers();
@@ -926,6 +1111,25 @@ RageDisplay_Legacy::EndFrame()
 	g_pWind->Update();
 
 	RageDisplay::EndFrame();
+
+	if (unlikely(bRecordFrame)) {
+		const auto frameEnd = std::chrono::steady_clock::now();
+		const double fFrameUs =
+		  std::chrono::duration<double, std::micro>(
+			frameEnd -
+			(m_bHasPrevFrameEnd ? m_BenchPrevFrameEnd : m_BenchDrawStart))
+			.count();
+		m_BenchPrevFrameEnd = frameEnd;
+		m_bHasPrevFrameEnd = true;
+		const double fCpuDrawUs = std::chrono::duration<double, std::micro>(
+									benchDrawEnd - m_BenchDrawStart)
+									.count();
+		const double fPresentUs = std::chrono::duration<double, std::micro>(
+									afterPresent - beforePresent)
+									.count();
+		BenchRecordFrameTimings(fFrameUs, fCpuDrawUs, fPresentUs);
+	}
+	m_bBenchFrameActive = false;
 }
 
 RageSurface*
@@ -976,6 +1180,90 @@ RageDisplay_Legacy::CreateScreenshot()
 	return image;
 }
 
+auto
+RageDisplay_Legacy::CaptureBenchScreenshot(const std::string& sVfsPngPath)
+  -> bool
+{
+	if (sVfsPngPath.empty()) {
+		return false;
+	}
+	struct ScopedSuppress
+	{
+		RageDisplay_Legacy* pDisplay;
+		explicit ScopedSuppress(RageDisplay_Legacy* p)
+		  : pDisplay(p)
+		{
+			pDisplay->SetBenchSuppressCounters(true);
+		}
+		~ScopedSuppress() { pDisplay->SetBenchSuppressCounters(false); }
+	} suppress(this);
+
+	RageSurface* pSurface = nullptr;
+	if (offscreenRenderTarget != nullptr) {
+		RageSurface* pRaw = GetTexture(offscreenRenderTarget->GetTexHandle());
+		if (pRaw == nullptr) {
+			return false;
+		}
+		pSurface = CreateSurface(offscreenRenderTarget->GetImageWidth(),
+								 offscreenRenderTarget->GetImageHeight(),
+								 pRaw->fmt.BitsPerPixel,
+								 pRaw->fmt.Rmask,
+								 pRaw->fmt.Gmask,
+								 pRaw->fmt.Bmask,
+								 pRaw->fmt.Amask);
+		RageSurfaceUtils::Blit(pRaw, pSurface);
+		delete pRaw;
+	} else {
+		const auto iWidth = (*g_pWind->GetActualVideoModeParams()).width;
+		const auto iHeight = (*g_pWind->GetActualVideoModeParams()).height;
+		const auto& desc = PIXEL_FORMAT_DESC[RagePixelFormat_RGBA8];
+		pSurface = CreateSurface(iWidth,
+								 iHeight,
+								 desc.bpp,
+								 desc.masks[0],
+								 desc.masks[1],
+								 desc.masks[2],
+								 0);
+		DebugFlushGLErrors();
+		glReadBuffer(GL_BACK);
+		DebugAssertNoGLError();
+		glReadPixels(
+		  0, 0, iWidth, iHeight, GL_RGBA, GL_UNSIGNED_BYTE, pSurface->pixels);
+		DebugAssertNoGLError();
+		RageSurfaceUtils::FlipVertically(pSurface);
+	}
+
+	RageFile out;
+	if (!out.Open(sVfsPngPath, RageFile::WRITE)) {
+		Locator::getLogger()->warn(
+		  "Couldn't write {}: {}", sVfsPngPath, out.GetError());
+		SAFE_DELETE(pSurface);
+		return false;
+	}
+	// RageSurfaceUtils::SavePNG closes its RageFile argument and passes
+	// GetRealPath() (m_Path) directly to stbi_write_png. Materialize the VFS
+	// entry first so ResolvePath yields the mounted host path even when the
+	// caller passes a leading '/' or runs outside the root directory.
+	out.Close();
+	const std::string sResolvedPath =
+	  FILEMAN != nullptr ? FILEMAN->ResolvePath(sVfsPngPath) : std::string();
+	RageFile pngTarget;
+	RageFile* pSaveFile = &out;
+	if (!sResolvedPath.empty() && sResolvedPath != sVfsPngPath) {
+		pngTarget.Open(sResolvedPath, RageFile::WRITE);
+		pSaveFile = &pngTarget;
+	}
+	std::string sError;
+	const bool bSaved = RageSurfaceUtils::SavePNG(pSurface, *pSaveFile, sError);
+	SAFE_DELETE(pSurface);
+	if (!bSaved) {
+		Locator::getLogger()->warn(
+		  "Couldn't save PNG {}: {}", sVfsPngPath, sError);
+		return false;
+	}
+	return true;
+}
+
 RageSurface*
 RageDisplay_Legacy::GetTexture(intptr_t iTexture)
 {
@@ -984,10 +1272,14 @@ RageDisplay_Legacy::GetTexture(intptr_t iTexture)
 
 	FlushGLErrors();
 
+	BenchCountStateCall();
 	glBindTexture(GL_TEXTURE_2D, iTexture);
 	GLint iHeight, iWidth, iAlphaBits;
+	BenchCountGetQuery();
 	glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &iHeight);
+	BenchCountGetQuery();
 	glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &iWidth);
+	BenchCountGetQuery();
 	glGetTexLevelParameteriv(
 	  GL_TEXTURE_2D, 0, GL_TEXTURE_ALPHA_SIZE, &iAlphaBits);
 	const int iFormat =
@@ -1089,15 +1381,18 @@ RageDisplay_Legacy::SendCurrentMatrices()
 			RageMatrixMultiply(&projection, &flip, &projection);
 		}
 		glMatrixMode(GL_PROJECTION);
+		BenchCountMatrixUpload();
 		glLoadMatrixf((const float*)&projection);
 
 		// OpenGL has just "modelView", whereas D3D has "world" and "view"
 		RageMatrix modelView;
 		RageMatrixMultiply(&modelView, GetViewTop(), GetWorldTop());
 		glMatrixMode(GL_MODELVIEW);
+		BenchCountMatrixUpload();
 		glLoadMatrixf((const float*)&modelView);
 
 		glMatrixMode(GL_TEXTURE);
+		BenchCountMatrixUpload();
 		glLoadMatrixf((const float*)GetTextureTop());
 	}
 }
@@ -1164,6 +1459,7 @@ class RageCompiledGeometrySWOGL : public RageCompiledGeometry
 			// XXX: Change me to scale the translation by the
 			// TextureTranslationScale of the first vertex.
 			RageMatrix mat;
+			BenchCountGetQuery();
 			glGetFloatv(GL_TEXTURE_MATRIX, static_cast<float*>(mat));
 
 			/*
@@ -1181,9 +1477,11 @@ class RageCompiledGeometrySWOGL : public RageCompiledGeometry
 			mat.m[3][2] = 0;
 
 			glMatrixMode(GL_TEXTURE);
+			BenchCountMatrixUpload();
 			glLoadMatrixf(static_cast<const float*>(mat));
 		}
 
+		BenchCountDrawCall();
 		glDrawElements(GL_TRIANGLES,
 					   meshInfo.iTriangleCount * 3,
 					   GL_UNSIGNED_SHORT,
@@ -1211,6 +1509,9 @@ class InvalidateObject
 static void
 InvalidateObjects()
 {
+	if (auto* pOGL = dynamic_cast<RageDisplay_Legacy*>(DISPLAY)) {
+		pOGL->OnContextInvalidated();
+	}
 	for (auto& it : g_InvalidateList) {
 		it->Invalidate();
 	}
@@ -1446,10 +1747,13 @@ RageCompiledGeometryHWOGL::Draw(int iMeshIndex) const
 	// will save some effort transforming these values.
 	// XXX: We should keep track of these ourself and avoid glGet*()
 	GLboolean bLighting;
+	BenchCountGetQuery();
 	glGetBooleanv(GL_LIGHTING, &bLighting);
 	GLboolean bTextureGenS;
+	BenchCountGetQuery();
 	glGetBooleanv(GL_TEXTURE_GEN_S, &bTextureGenS);
 	GLboolean bTextureGenT;
+	BenchCountGetQuery();
 	glGetBooleanv(GL_TEXTURE_GEN_T, &bTextureGenT);
 
 	if (bLighting || bTextureGenS || bTextureGenT) {
@@ -1477,6 +1781,7 @@ RageCompiledGeometryHWOGL::Draw(int iMeshIndex) const
 			  g_iAttribTextureMatrixScale, 2, GL_FLOAT, false, 0, nullptr);
 			DebugAssertNoGLError();
 
+			BenchCountStateCall();
 			glUseProgramObjectARB(g_bTextureMatrixShader);
 			DebugAssertNoGLError();
 		} else {
@@ -1484,6 +1789,7 @@ RageCompiledGeometryHWOGL::Draw(int iMeshIndex) const
 			// XXX: Change me to scale the translation by the
 			// TextureTranslationScale of the first vertex.
 			RageMatrix mat;
+			BenchCountGetQuery();
 			glGetFloatv(GL_TEXTURE_MATRIX, static_cast<float*>(mat));
 
 			/*
@@ -1501,6 +1807,7 @@ RageCompiledGeometryHWOGL::Draw(int iMeshIndex) const
 			mat.m[3][2] = 0;
 
 			glMatrixMode(GL_TEXTURE);
+			BenchCountMatrixUpload();
 			glLoadMatrixf(static_cast<const float*>(mat));
 			DebugAssertNoGLError();
 		}
@@ -1512,6 +1819,7 @@ RageCompiledGeometryHWOGL::Draw(int iMeshIndex) const
 #define BUFFER_OFFSET(o) ((char*)(o))
 
 	ASSERT(glDrawRangeElements != NULL);
+	BenchCountDrawCall();
 	glDrawRangeElements(
 	  GL_TRIANGLES,
 	  meshInfo.iVertexStart, // minimum array index contained in indices
@@ -1524,6 +1832,7 @@ RageCompiledGeometryHWOGL::Draw(int iMeshIndex) const
 
 	if (meshInfo.m_bNeedsTextureMatrixScale && g_bTextureMatrixShader != 0) {
 		glDisableVertexAttribArrayARB(g_iAttribTextureMatrixScale);
+		BenchCountStateCall();
 		glUseProgramObjectARB(0);
 	}
 }
@@ -1550,6 +1859,7 @@ RageDisplay_Legacy::DrawQuadsInternal(const RageSpriteVertex v[], int iNumVerts)
 	SendCurrentMatrices();
 
 	SetupVertices(v, iNumVerts);
+	BenchCountDrawCall();
 	glDrawArrays(GL_QUADS, 0, iNumVerts);
 }
 
@@ -1561,6 +1871,7 @@ RageDisplay_Legacy::DrawQuadStripInternal(const RageSpriteVertex v[],
 	SendCurrentMatrices();
 
 	SetupVertices(v, iNumVerts);
+	BenchCountDrawCall();
 	glDrawArrays(GL_QUAD_STRIP, 0, iNumVerts);
 }
 
@@ -1599,6 +1910,7 @@ RageDisplay_Legacy::DrawSymmetricQuadStripInternal(const RageSpriteVertex v[],
 	SendCurrentMatrices();
 
 	SetupVertices(v, iNumVerts);
+	BenchCountDrawCall();
 	glDrawElements(GL_TRIANGLES, iNumIndices, GL_UNSIGNED_SHORT, &vIndices[0]);
 }
 
@@ -1609,6 +1921,7 @@ RageDisplay_Legacy::DrawFanInternal(const RageSpriteVertex v[], int iNumVerts)
 	SendCurrentMatrices();
 
 	SetupVertices(v, iNumVerts);
+	BenchCountDrawCall();
 	glDrawArrays(GL_TRIANGLE_FAN, 0, iNumVerts);
 }
 
@@ -1619,6 +1932,7 @@ RageDisplay_Legacy::DrawStripInternal(const RageSpriteVertex v[], int iNumVerts)
 	SendCurrentMatrices();
 
 	SetupVertices(v, iNumVerts);
+	BenchCountDrawCall();
 	glDrawArrays(GL_TRIANGLE_STRIP, 0, iNumVerts);
 }
 
@@ -1630,6 +1944,7 @@ RageDisplay_Legacy::DrawTrianglesInternal(const RageSpriteVertex v[],
 	SendCurrentMatrices();
 
 	SetupVertices(v, iNumVerts);
+	BenchCountDrawCall();
 	glDrawArrays(GL_TRIANGLES, 0, iNumVerts);
 }
 
@@ -1690,6 +2005,7 @@ RageDisplay_Legacy::DrawLineStripInternal(const RageSpriteVertex v[],
 
 	/* Draw the line loop: */
 	SetupVertices(v, iNumVerts);
+	BenchCountDrawCall();
 	glDrawArrays(GL_LINE_STRIP, 0, iNumVerts);
 
 	glDisable(GL_LINE_SMOOTH);
@@ -1707,6 +2023,7 @@ RageDisplay_Legacy::DrawLineStripInternal(const RageSpriteVertex v[],
 	 * because points aren't scaled like regular polys--a zero-size point
 	 * will still be drawn. */
 	RageMatrix mat;
+	BenchCountGetQuery();
 	glGetFloatv(GL_MODELVIEW_MATRIX, static_cast<float*>(mat));
 
 	if (mat.m[0][0] < 1e-5 && mat.m[1][1] < 1e-5)
@@ -1715,6 +2032,7 @@ RageDisplay_Legacy::DrawLineStripInternal(const RageSpriteVertex v[],
 	glEnable(GL_POINT_SMOOTH);
 
 	SetupVertices(v, iNumVerts);
+	BenchCountDrawCall();
 	glDrawArrays(GL_POINTS, 0, iNumVerts);
 
 	glDisable(GL_POINT_SMOOTH);
@@ -1762,6 +2080,7 @@ RageDisplay_Legacy::SetTexture(TextureUnit tu, intptr_t iTexture)
 
 	if (iTexture != 0u) {
 		glEnable(GL_TEXTURE_2D);
+		BenchCountStateCall();
 		glBindTexture(GL_TEXTURE_2D, iTexture);
 	} else {
 		glDisable(GL_TEXTURE_2D);
@@ -1776,9 +2095,11 @@ RageDisplay_Legacy::SetTextureMode(TextureUnit tu, TextureMode tm)
 
 	switch (tm) {
 		case TextureMode_Modulate:
+			BenchCountStateCall();
 			glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
 			break;
 		case TextureMode_Add:
+			BenchCountStateCall();
 			glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_ADD);
 			break;
 		case TextureMode_Glow:
@@ -1787,27 +2108,36 @@ RageDisplay_Legacy::SetTextureMode(TextureUnit tu, TextureMode tm)
 				!GLEW_EXT_texture_env_combine) {
 				/* This is changing blend state, instead of texture state, which
 				 * isn't great, but it's better than doing nothing. */
+				BenchCountStateCall();
 				glBlendFunc(GL_SRC_ALPHA, GL_ONE);
 				return;
 			}
 
 			// and this is glowmode,whiten:
 			// Source color is the diffuse color only:
+			BenchCountStateCall();
 			glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_COMBINE_EXT);
+			BenchCountStateCall();
 			glTexEnvi(GL_TEXTURE_ENV, GLenum(GL_COMBINE_RGB_EXT), GL_REPLACE);
+			BenchCountStateCall();
 			glTexEnvi(
 			  GL_TEXTURE_ENV, GLenum(GL_SOURCE0_RGB_EXT), GL_PRIMARY_COLOR_EXT);
 
 			// Source alpha is texture alpha * diffuse alpha:
+			BenchCountStateCall();
 			glTexEnvi(
 			  GL_TEXTURE_ENV, GLenum(GL_COMBINE_ALPHA_EXT), GL_MODULATE);
+			BenchCountStateCall();
 			glTexEnvi(
 			  GL_TEXTURE_ENV, GLenum(GL_OPERAND0_ALPHA_EXT), GL_SRC_ALPHA);
+			BenchCountStateCall();
 			glTexEnvi(GL_TEXTURE_ENV,
 					  GLenum(GL_SOURCE0_ALPHA_EXT),
 					  GL_PRIMARY_COLOR_EXT);
+			BenchCountStateCall();
 			glTexEnvi(
 			  GL_TEXTURE_ENV, GLenum(GL_OPERAND1_ALPHA_EXT), GL_SRC_ALPHA);
+			BenchCountStateCall();
 			glTexEnvi(GL_TEXTURE_ENV, GLenum(GL_SOURCE1_ALPHA_EXT), GL_TEXTURE);
 			break;
 		default:
@@ -1818,6 +2148,7 @@ RageDisplay_Legacy::SetTextureMode(TextureUnit tu, TextureMode tm)
 void
 RageDisplay_Legacy::SetTextureFiltering(TextureUnit tu, bool b)
 {
+	BenchCountStateCall();
 	glTexParameteri(
 	  GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, b ? GL_LINEAR : GL_NEAREST);
 
@@ -1825,7 +2156,9 @@ RageDisplay_Legacy::SetTextureFiltering(TextureUnit tu, bool b)
 	if (b) {
 		auto iWidth1 = -1;
 		auto iWidth2 = -1;
+		BenchCountGetQuery();
 		glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &iWidth1);
+		BenchCountGetQuery();
 		glGetTexLevelParameteriv(GL_TEXTURE_2D, 1, GL_TEXTURE_WIDTH, &iWidth2);
 		if (iWidth1 > 1 && iWidth2 != 0) {
 			/* Mipmaps are enabled. */
@@ -1840,6 +2173,7 @@ RageDisplay_Legacy::SetTextureFiltering(TextureUnit tu, bool b)
 		iMinFilter = GL_NEAREST;
 	}
 
+	BenchCountStateCall();
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, iMinFilter);
 }
 
@@ -1884,19 +2218,27 @@ RageDisplay_Legacy::SetEffectMode(EffectMode effect)
 	}
 
 	DebugFlushGLErrors();
+	BenchCountStateCall();
 	glUseProgramObjectARB(hShader);
 	if (hShader == 0)
 		return;
+	BenchCountGetQuery();
 	const auto iTexture1 = glGetUniformLocationARB(hShader, "Texture1");
+	BenchCountGetQuery();
 	const auto iTexture2 = glGetUniformLocationARB(hShader, "Texture2");
+	BenchCountStateCall();
 	glUniform1iARB(iTexture1, 0);
+	BenchCountStateCall();
 	glUniform1iARB(iTexture2, 1);
 
 	if (effect == EffectMode_YUYV422) {
+		BenchCountGetQuery();
 		const auto iTextureWidthUniform =
 		  glGetUniformLocationARB(hShader, "TextureWidth");
 		GLint iWidth;
+		BenchCountGetQuery();
 		glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &iWidth);
+		BenchCountStateCall();
 		glUniform1iARB(iTextureWidthUniform, iWidth);
 	}
 
@@ -1936,6 +2278,7 @@ RageDisplay_Legacy::SetBlendMode(BlendMode mode)
 	glEnable(GL_BLEND);
 
 	if (glBlendEquation != nullptr) {
+		BenchCountStateCall();
 		if (mode == BLEND_INVERT_DEST)
 			glBlendEquation(GL_FUNC_SUBTRACT);
 		else if (mode == BLEND_SUBTRACT)
@@ -2006,6 +2349,7 @@ RageDisplay_Legacy::SetBlendMode(BlendMode mode)
 			DEFAULT_FAIL(mode);
 	}
 
+	BenchCountStateCall();
 	if (GLEW_EXT_blend_equation_separate)
 		glBlendFuncSeparateEXT(iSourceRGB, iDestRGB, iSourceAlpha, iDestAlpha);
 	else
@@ -2016,6 +2360,7 @@ bool
 RageDisplay_Legacy::IsZWriteEnabled() const
 {
 	bool a;
+	BenchCountGetQuery();
 	glGetBooleanv(GL_DEPTH_WRITEMASK, (unsigned char*)&a);
 	return a;
 }
@@ -2024,6 +2369,7 @@ bool
 RageDisplay_Legacy::IsZTestEnabled() const
 {
 	GLenum a;
+	BenchCountGetQuery();
 	glGetIntegerv(GL_DEPTH_FUNC, (GLint*)&a);
 	return a != GL_ALWAYS;
 }
@@ -2040,6 +2386,7 @@ RageDisplay_Legacy::ClearZBuffer()
 void
 RageDisplay_Legacy::SetZWrite(bool b)
 {
+	BenchCountStateCall();
 	glDepthMask(b);
 }
 
@@ -2058,12 +2405,15 @@ RageDisplay_Legacy::SetZTestMode(ZTestMode mode)
 	glEnable(GL_DEPTH_TEST);
 	switch (mode) {
 		case ZTEST_OFF:
+			BenchCountStateCall();
 			glDepthFunc(GL_ALWAYS);
 			break;
 		case ZTEST_WRITE_ON_PASS:
+			BenchCountStateCall();
 			glDepthFunc(GL_LEQUAL);
 			break;
 		case ZTEST_WRITE_ON_FAIL:
+			BenchCountStateCall();
 			glDepthFunc(GL_GREATER);
 			break;
 		default:
@@ -2080,7 +2430,9 @@ RageDisplay_Legacy::SetTextureWrapping(TextureUnit tu, bool b)
 	SetTextureUnit(tu);
 
 	const GLenum mode = b ? GL_REPEAT : GL_CLAMP_TO_EDGE;
+	BenchCountStateCall();
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, mode);
+	BenchCountStateCall();
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, mode);
 }
 
@@ -2097,6 +2449,7 @@ RageDisplay_Legacy::SetMaterial(const RageColor& emissive,
 	// We can do this fake lighting by setting the vertex color.
 	// XXX: unintended: SetLighting must be called before SetMaterial
 	GLboolean bLighting;
+	BenchCountGetQuery();
 	glGetBooleanv(GL_LIGHTING, &bLighting);
 
 	if (bLighting) {
@@ -2158,9 +2511,11 @@ RageDisplay_Legacy::SetCullMode(CullMode mode)
 		glEnable(GL_CULL_FACE);
 	switch (mode) {
 		case CULL_BACK:
+			BenchCountStateCall();
 			glCullFace(GL_BACK);
 			break;
 		case CULL_FRONT:
+			BenchCountStateCall();
 			glCullFace(GL_FRONT);
 			break;
 		case CULL_NONE:
@@ -2357,11 +2712,13 @@ RageDisplay_Legacy::CreateTexture(RagePixelFormat pixfmt,
 	glGenTextures(1, reinterpret_cast<GLuint*>(&iTexHandle));
 	ASSERT(iTexHandle != 0);
 
+	BenchCountStateCall();
 	glBindTexture(GL_TEXTURE_2D, iTexHandle);
 
 	if ((*g_pWind->GetActualVideoModeParams()).bAnisotropicFiltering &&
 		GLEW_EXT_texture_filter_anisotropic) {
 		GLfloat fLargestSupportedAnisotropy;
+		BenchCountGetQuery();
 		glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT,
 					&fLargestSupportedAnisotropy);
 		glTexParameterf(GL_TEXTURE_2D,
@@ -2450,6 +2807,7 @@ RageDisplay_Legacy::CreateTexture(RagePixelFormat pixfmt,
 	/* Sanity check: */
 	if (pixfmt == RagePixelFormat_PAL) {
 		auto iSize = 0;
+		BenchCountGetQuery();
 		glGetTexLevelParameteriv(
 		  GL_TEXTURE_2D, 0, GLenum(GL_TEXTURE_INDEX_SIZE_EXT), &iSize);
 		if (iSize != 8)
@@ -2555,6 +2913,7 @@ RageDisplay_Legacy::UpdateTexture(intptr_t iTexHandle,
 								  int iWidth,
 								  int iHeight)
 {
+	BenchCountStateCall();
 	glBindTexture(GL_TEXTURE_2D, iTexHandle);
 
 	bool bFreeImg;
@@ -2570,6 +2929,7 @@ RageDisplay_Legacy::UpdateTexture(intptr_t iTexHandle,
 	 * set up glPixelMap. */
 	if (pImg->fmt.palette) {
 		GLenum glTexFormat = 0;
+		BenchCountGetQuery();
 		glGetTexLevelParameteriv(GL_PROXY_TEXTURE_2D,
 								 0,
 								 GLenum(GL_TEXTURE_INTERNAL_FORMAT),
@@ -2678,6 +3038,7 @@ RenderTarget_FramebufferObject::Create(const RenderTargetParam& param,
 	iTextureWidthOut = iTextureWidth;
 	iTextureHeightOut = iTextureHeight;
 
+	BenchCountStateCall();
 	glBindTexture(GL_TEXTURE_2D, m_iTexHandle);
 	GLenum internalformat;
 	const GLenum type = param.bWithAlpha ? GL_RGBA : GL_RGB;
@@ -2697,7 +3058,9 @@ RenderTarget_FramebufferObject::Create(const RenderTargetParam& param,
 				 nullptr);
 	DebugAssertNoGLError();
 
+	BenchCountStateCall();
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	BenchCountStateCall();
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 	glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 	glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
@@ -2721,11 +3084,13 @@ RenderTarget_FramebufferObject::Create(const RenderTargetParam& param,
 		 (GLEW_EXT_framebuffer_multisample && GLEW_EXT_framebuffer_blit))) {
 		FlushGLErrors();
 		GLint maxSamples = 0;
+		BenchCountGetQuery();
 		glGetIntegerv(GL_MAX_SAMPLES, &maxSamples);
 		const GLint samples = std::min<GLint>(4, maxSamples);
 		auto fnMultisample = GLEW_ARB_framebuffer_object
 							   ? glRenderbufferStorageMultisample
 							   : glRenderbufferStorageMultisampleEXT;
+		BenchCountGetQuery();
 		if (glGetError() == GL_NO_ERROR && samples >= 2 &&
 			fnMultisample != nullptr) {
 			glGenFramebuffersEXT(
@@ -2764,9 +3129,11 @@ RenderTarget_FramebufferObject::Create(const RenderTargetParam& param,
 				}
 				const auto msaaStatus =
 				  glCheckFramebufferStatusEXT(GL_FRAMEBUFFER_EXT);
-				if (msaaStatus == GL_FRAMEBUFFER_COMPLETE_EXT &&
-					glGetError() == GL_NO_ERROR) {
-					bMSAASucceeded = true;
+				if (msaaStatus == GL_FRAMEBUFFER_COMPLETE_EXT) {
+					BenchCountGetQuery();
+					if (glGetError() == GL_NO_ERROR) {
+						bMSAASucceeded = true;
+					}
 				}
 			}
 			if (!bMSAASucceeded) {
@@ -3067,6 +3434,7 @@ void
 RageDisplay_Legacy::SetAlphaTest(bool b)
 {
 	// Previously this was 0.01, rather than 0x01.
+	BenchCountStateCall();
 	glAlphaFunc(GL_GREATER, 0.00390625 /* 1/256 */);
 	if (b)
 		glEnable(GL_ALPHA_TEST);
@@ -3153,6 +3521,7 @@ RageDisplay_Legacy::SetCelShaded(int stage)
 	if (!GLEW_ARB_fragment_program && !GL_ARB_shading_language_100)
 		return; // not supported
 
+	BenchCountStateCall();
 	switch (stage) {
 		case 1:
 			glUseProgramObjectARB(g_gShellShader);
