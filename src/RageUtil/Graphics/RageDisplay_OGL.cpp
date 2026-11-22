@@ -294,13 +294,19 @@ FixLittleEndian()
 	}
 }
 
+static bool g_bHardwareVBOBound = true;
+
 static void
 TurnOffHardwareVBO()
 {
+	if (!g_bHardwareVBOBound) {
+		return;
+	}
 	if (GLEW_ARB_vertex_buffer_object) {
 		glBindBufferARB(GL_ARRAY_BUFFER_ARB, 0);
 		glBindBufferARB(GL_ELEMENT_ARRAY_BUFFER_ARB, 0);
 	}
+	g_bHardwareVBOBound = false;
 }
 
 RageDisplay_Legacy::RageDisplay_Legacy()
@@ -313,6 +319,18 @@ RageDisplay_Legacy::RageDisplay_Legacy()
 
 	g_pWind = nullptr;
 	g_bTextureMatrixShader = 0;
+
+	m_vQuadBatch.reserve(kMaxQuadBatchVerts);
+	m_vQuadIndices.resize(kMaxQuadBatchQuads * 6);
+	for (size_t i = 0; i < kMaxQuadBatchQuads; ++i) {
+		const auto uBase = static_cast<uint16_t>(i * 4);
+		m_vQuadIndices[i * 6 + 0] = uBase + 0;
+		m_vQuadIndices[i * 6 + 1] = uBase + 1;
+		m_vQuadIndices[i * 6 + 2] = uBase + 2;
+		m_vQuadIndices[i * 6 + 3] = uBase + 0;
+		m_vQuadIndices[i * 6 + 4] = uBase + 2;
+		m_vQuadIndices[i * 6 + 5] = uBase + 3;
+	}
 }
 
 std::string
@@ -466,6 +484,30 @@ static GLhandleARB g_hYUYV422Shader = 0;
 static GLhandleARB g_gShellShader = 0;
 static GLhandleARB g_gCelShader = 0;
 
+struct EffectShaderInfo
+{
+	GLhandleARB hProgram{ 0 };
+	GLint iTex1{ -1 };
+	GLint iTex2{ -1 };
+	GLint iTexWidth{ -1 };
+};
+static EffectShaderInfo g_aEffectShaders[NUM_EffectMode];
+
+static void
+CacheEffectShader(EffectMode mode, GLhandleARB hProg)
+{
+	auto& info = g_aEffectShaders[mode];
+	info = EffectShaderInfo{};
+	info.hProgram = hProg;
+	if (hProg != 0) {
+		info.iTex1 = glGetUniformLocationARB(hProg, "Texture1");
+		info.iTex2 = glGetUniformLocationARB(hProg, "Texture2");
+		if (mode == EffectMode_YUYV422) {
+			info.iTexWidth = glGetUniformLocationARB(hProg, "TextureWidth");
+		}
+	}
+}
+
 void
 InitShaders()
 {
@@ -504,6 +546,16 @@ InitShaders()
 	  GL_FRAGMENT_SHADER_ARB, "Data/Shaders/GLSL/Screen.frag", asDefines);
 	g_hYUYV422Shader = LoadShader(
 	  GL_FRAGMENT_SHADER_ARB, "Data/Shaders/GLSL/YUYV422.frag", asDefines);
+
+	CacheEffectShader(EffectMode_Normal, 0);
+	CacheEffectShader(EffectMode_Unpremultiply, g_bUnpremultiplyShader);
+	CacheEffectShader(EffectMode_ColorBurn, g_bColorBurnShader);
+	CacheEffectShader(EffectMode_ColorDodge, g_bColorDodgeShader);
+	CacheEffectShader(EffectMode_VividLight, g_bVividLightShader);
+	CacheEffectShader(EffectMode_HardMix, g_hHardMixShader);
+	CacheEffectShader(EffectMode_Overlay, g_hOverlayShader);
+	CacheEffectShader(EffectMode_Screen, g_hScreenShader);
+	CacheEffectShader(EffectMode_YUYV422, g_hYUYV422Shader);
 
 	// Bind attributes.
 	if (g_bTextureMatrixShader) {
@@ -546,6 +598,7 @@ RageDisplay_Legacy::Init(VideoModeParams&& p,
 						 bool bAllowUnacceleratedRenderer)
 {
 	g_pWind = LowLevelWindow::Create();
+	InvalidateStateCache(false, true);
 
 	auto bIgnore = false;
 	auto sError = SetVideoMode(std::move(p), bIgnore);
@@ -913,6 +966,9 @@ RageDisplay_Legacy::TryVideoMode(const VideoModeParams& p, bool& bNewDeviceOut)
 		InvalidateObjects();
 
 		InitShaders();
+		InvalidateStateCache(false, true);
+	} else {
+		InvalidateStateCache(true, false);
 	}
 
 // I'm not sure this is correct -Colby
@@ -935,15 +991,73 @@ RageDisplay_Legacy::TryVideoMode(const VideoModeParams& p, bool& bNewDeviceOut)
 int
 RageDisplay_Legacy::GetMaxTextureSize() const
 {
-	GLint size;
-	BenchCountGetQuery();
-	glGetIntegerv(GL_MAX_TEXTURE_SIZE, &size);
-	return size;
+	if (m_iMaxTextureSize <= 0) {
+		GLint size = 0;
+		BenchCountGetQuery();
+		glGetIntegerv(GL_MAX_TEXTURE_SIZE, &size);
+		m_iMaxTextureSize = size;
+	}
+	return m_iMaxTextureSize;
+}
+
+bool
+RageDisplay_Legacy::SupportsNonPowerOfTwoTextures() const
+{
+	return GLEW_ARB_texture_non_power_of_two != 0;
+}
+
+void
+RageDisplay_Legacy::InvalidateStateCache(bool bFlushBatch,
+										 bool bResetContextDefaults)
+{
+	if (bFlushBatch && !m_vQuadBatch.empty()) {
+		FlushQuadBatch();
+	} else {
+		m_vQuadBatch.clear();
+	}
+	g_bHardwareVBOBound = true;
+	m_iActiveTexUnit = -1;
+	std::fill(std::begin(m_auBoundTex), std::end(m_auBoundTex), 0U);
+	std::fill(std::begin(m_abTex2DEnabled), std::end(m_abTex2DEnabled), false);
+	std::fill(std::begin(m_abTexUnitStateValid),
+			  std::end(m_abTexUnitStateValid),
+			  false);
+	std::fill(std::begin(m_abTexModeValid), std::end(m_abTexModeValid), false);
+	m_bEffectModeValid = false;
+	m_iCachedEffectTexWidth = -1;
+	m_bBlendModeValid = false;
+	m_bZWriteValid = false;
+	m_bZTestValid = false;
+	m_bZBiasValid = false;
+	m_bCullModeValid = false;
+	m_bAlphaTestValid = false;
+	m_bLightingValid = false;
+	m_bPolygonModeValid = false;
+	if (bResetContextDefaults) {
+		m_uEnabledTexUnitMask = 0;
+		m_bCachedLighting = false;
+		m_uSphereMapMask = 0;
+		m_iCelShadedStage = 0;
+		m_CachedPolygonMode = POLYGON_FILL;
+	}
+	m_bClientVertexEnabled = false;
+	m_bClientColorEnabled = false;
+	m_bClientTex0Enabled = false;
+	m_bClientTex1Enabled = true;
+	m_bClientNormalEnabled = true;
+	m_bProjUploadValid = false;
+	m_bModelViewUploadValid = false;
+	m_bModelViewIsIdentity = false;
+	m_bTexMatrixUploadedIsIdentity = false;
+	m_bTexUploadValid = false;
 }
 
 void
 RageDisplay_Legacy::OnContextInvalidated()
 {
+	m_mapTexInfo.clear();
+	m_iMaxTextureSize = 0;
+	InvalidateStateCache(false, true);
 	// Context recreation destroys GL objects owned by the previous context;
 	// pad unharvested slots so gpu_us remains index-aligned with frame_us.
 	for (size_t i = 0; i < m_uGpuRingCount; ++i) {
@@ -1019,6 +1133,7 @@ RageDisplay_Legacy::OnBenchEndPhase()
 bool
 RageDisplay_Legacy::BeginFrame()
 {
+	FlushQuadBatch();
 	if (unlikely(m_bGpuQueryActive && glEndQuery != nullptr)) {
 		glEndQuery(GL_TIME_ELAPSED);
 		m_bGpuQueryActive = false;
@@ -1076,7 +1191,9 @@ void
 RageDisplay_Legacy::EndFrame()
 {
 	if (UseOffscreenRenderTarget()) {
+		FlushQuadBatch();
 		offscreenRenderTarget->FinishRenderingTo();
+		InvalidateStateCache(false, false);
 		Sprite fullscreenSprite;
 		// We've got a hold of this, don't want sprite deleting it when
 		// it's deleted
@@ -1094,6 +1211,8 @@ RageDisplay_Legacy::EndFrame()
 		fullscreenSprite.Draw();
 		CameraPopMatrix();
 	}
+
+	FlushQuadBatch();
 
 	const bool bRecordFrame = m_bBenchFrameActive && IsBenchRecording();
 	std::chrono::steady_clock::time_point benchDrawEnd{};
@@ -1156,6 +1275,7 @@ RageDisplay_Legacy::EndFrame()
 RageSurface*
 RageDisplay_Legacy::CreateScreenshot()
 {
+	FlushQuadBatch();
 	const auto width = (*g_pWind->GetActualVideoModeParams()).width;
 	const auto height = (*g_pWind->GetActualVideoModeParams()).height;
 
@@ -1208,6 +1328,7 @@ RageDisplay_Legacy::CaptureBenchScreenshot(const std::string& sVfsPngPath)
 	if (sVfsPngPath.empty()) {
 		return false;
 	}
+	FlushQuadBatch();
 	struct ScopedSuppress
 	{
 		RageDisplay_Legacy* pDisplay;
@@ -1272,7 +1393,7 @@ RageDisplay_Legacy::CaptureBenchScreenshot(const std::string& sVfsPngPath)
 									   Swap32BE(0xFF000000),
 									   Swap32BE(0x00FF0000),
 									   Swap32BE(0x0000FF00),
-									   Swap32BE(0x0000FF00));
+									   Swap32BE(0x000000FF));
 	if (!bConverted) {
 		pPngSurface = pSurface;
 	}
@@ -1322,8 +1443,10 @@ RageDisplay_Legacy::GetTexture(intptr_t iTexture)
 	if (iTexture == 0)
 		return nullptr; // XXX
 
+	FlushQuadBatch();
 	FlushGLErrors();
 
+	SetTextureUnit(TextureUnit_1);
 	BenchCountStateCall();
 	glBindTexture(GL_TEXTURE_2D, iTexture);
 	GLint iHeight, iWidth, iAlphaBits;
@@ -1352,6 +1475,7 @@ RageDisplay_Legacy::GetTexture(intptr_t iTexture)
 				  GL_UNSIGNED_BYTE,
 				  pImage->pixels);
 	AssertNoGLError();
+	InvalidateStateCache(false, false);
 
 	return pImage;
 }
@@ -1362,71 +1486,83 @@ RageDisplay_Legacy::GetActualVideoModeParams() const
 	return g_pWind->GetActualVideoModeParams();
 }
 
-static void
-SetupVertices(const RageSpriteVertex v[], int iNumVerts)
+void
+RageDisplay_Legacy::SetupVertices(const RageSpriteVertex v[], int iNumVerts)
 {
-	static float *Vertex, *Texture, *Normal;
-	static GLubyte* Color;
-	static auto Size = 0;
-	if (iNumVerts > Size) {
-		Size = iNumVerts;
-		delete[] Vertex;
-		delete[] Color;
-		delete[] Texture;
-		delete[] Normal;
-		Vertex = new float[Size * 3];
-		Color = new GLubyte[Size * 4];
-		Texture = new float[Size * 2];
-		Normal = new float[Size * 3];
+	if (iNumVerts <= 0) {
+		return;
+	}
+	constexpr GLsizei kStride = sizeof(RageSpriteVertex);
+	if (!m_bClientVertexEnabled) {
+		glEnableClientState(GL_VERTEX_ARRAY);
+		m_bClientVertexEnabled = true;
+	}
+	glVertexPointer(3, GL_FLOAT, kStride, &v[0].p);
+
+	if (!m_bClientColorEnabled) {
+		glEnableClientState(GL_COLOR_ARRAY);
+		m_bClientColorEnabled = true;
+	}
+	if (GLEW_ARB_vertex_array_bgra || GLEW_EXT_vertex_array_bgra) {
+		glColorPointer(GL_BGRA, GL_UNSIGNED_BYTE, kStride, &v[0].c);
+	} else {
+		m_vFallbackRGBA.resize(static_cast<size_t>(iNumVerts) * 4);
+		for (int i = 0; i < iNumVerts; ++i) {
+			m_vFallbackRGBA[i * 4 + 0] = v[i].c.r;
+			m_vFallbackRGBA[i * 4 + 1] = v[i].c.g;
+			m_vFallbackRGBA[i * 4 + 2] = v[i].c.b;
+			m_vFallbackRGBA[i * 4 + 3] = v[i].c.a;
+		}
+		glColorPointer(4, GL_UNSIGNED_BYTE, 0, m_vFallbackRGBA.data());
 	}
 
-	for (unsigned i = 0; i < static_cast<unsigned>(iNumVerts); ++i) {
-		Vertex[i * 3 + 0] = v[i].p[0];
-		Vertex[i * 3 + 1] = v[i].p[1];
-		Vertex[i * 3 + 2] = v[i].p[2];
-		Color[i * 4 + 0] = v[i].c.r;
-		Color[i * 4 + 1] = v[i].c.g;
-		Color[i * 4 + 2] = v[i].c.b;
-		Color[i * 4 + 3] = v[i].c.a;
-		Texture[i * 2 + 0] = v[i].t[0];
-		Texture[i * 2 + 1] = v[i].t[1];
-		Normal[i * 3 + 0] = v[i].n[0];
-		Normal[i * 3 + 1] = v[i].n[1];
-		Normal[i * 3 + 2] = v[i].n[2];
+	if (!m_bClientTex0Enabled) {
+		glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+		m_bClientTex0Enabled = true;
 	}
-	glEnableClientState(GL_VERTEX_ARRAY);
-	glVertexPointer(3, GL_FLOAT, 0, Vertex);
-
-	glEnableClientState(GL_COLOR_ARRAY);
-	glColorPointer(4, GL_UNSIGNED_BYTE, 0, Color);
-
-	glEnableClientState(GL_TEXTURE_COORD_ARRAY);
-	glTexCoordPointer(2, GL_FLOAT, 0, Texture);
+	glTexCoordPointer(2, GL_FLOAT, kStride, &v[0].t);
 
 	if (GLEW_ARB_multitexture) {
-		glClientActiveTextureARB(GL_TEXTURE1_ARB);
-		glEnableClientState(GL_TEXTURE_COORD_ARRAY);
-		glTexCoordPointer(2, GL_FLOAT, 0, Texture);
-		glClientActiveTextureARB(GL_TEXTURE0_ARB);
+		const bool bNeedTex1 = (m_uEnabledTexUnitMask & ~1U) != 0;
+		if (bNeedTex1) {
+			glClientActiveTextureARB(GL_TEXTURE1_ARB);
+			if (!m_bClientTex1Enabled) {
+				glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+				m_bClientTex1Enabled = true;
+			}
+			glTexCoordPointer(2, GL_FLOAT, kStride, &v[0].t);
+			glClientActiveTextureARB(GL_TEXTURE0_ARB);
+		} else if (m_bClientTex1Enabled) {
+			glClientActiveTextureARB(GL_TEXTURE1_ARB);
+			glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+			glClientActiveTextureARB(GL_TEXTURE0_ARB);
+			m_bClientTex1Enabled = false;
+		}
 	}
 
-	glEnableClientState(GL_NORMAL_ARRAY);
-	glNormalPointer(GL_FLOAT, 0, Normal);
+	const bool bNeedNormal =
+	  m_bCachedLighting || m_uSphereMapMask != 0 || m_iCelShadedStage != 0;
+	if (bNeedNormal) {
+		if (!m_bClientNormalEnabled) {
+			glEnableClientState(GL_NORMAL_ARRAY);
+			m_bClientNormalEnabled = true;
+		}
+		glNormalPointer(GL_FLOAT, kStride, &v[0].n);
+	} else if (m_bClientNormalEnabled) {
+		glDisableClientState(GL_NORMAL_ARRAY);
+		m_bClientNormalEnabled = false;
+	}
 }
 
 void
 RageDisplay_Legacy::SendCurrentMatrices()
 {
-	static RageMatrix Centering;
-	static RageMatrix Projection;
-
-	if (Centering != *GetCentering() || Projection != *GetProjectionTop()) {
-		Centering = *GetCentering();
-		Projection = *GetProjectionTop();
-
+	const uint64_t uCenteringRev = GetCenteringRev();
+	const uint64_t uProjRev = GetProjectionRev();
+	if (!m_bProjUploadValid || m_uUploadedCenteringRev != uCenteringRev ||
+		m_uUploadedProjRev != uProjRev || m_bUploadedInvertY != g_bInvertY) {
 		RageMatrix projection;
 		RageMatrixMultiply(&projection, GetCentering(), GetProjectionTop());
-
 		if (g_bInvertY) {
 			RageMatrix flip;
 			RageMatrixScale(&flip, +1, -1, +1);
@@ -1434,18 +1570,36 @@ RageDisplay_Legacy::SendCurrentMatrices()
 		}
 		glMatrixMode(GL_PROJECTION);
 		BenchCountMatrixUpload();
-		glLoadMatrixf((const float*)&projection);
+		glLoadMatrixf(static_cast<const float*>(projection));
+		m_uUploadedCenteringRev = uCenteringRev;
+		m_uUploadedProjRev = uProjRev;
+		m_bUploadedInvertY = g_bInvertY;
+		m_bProjUploadValid = true;
+	}
 
-		// OpenGL has just "modelView", whereas D3D has "world" and "view"
+	const uint64_t uViewRev = GetViewRev();
+	const uint64_t uWorldRev = GetWorldRev();
+	if (!m_bModelViewUploadValid || m_uUploadedViewRev != uViewRev ||
+		m_uUploadedWorldRev != uWorldRev) {
 		RageMatrix modelView;
 		RageMatrixMultiply(&modelView, GetViewTop(), GetWorldTop());
 		glMatrixMode(GL_MODELVIEW);
 		BenchCountMatrixUpload();
-		glLoadMatrixf((const float*)&modelView);
+		glLoadMatrixf(static_cast<const float*>(modelView));
+		m_uUploadedViewRev = uViewRev;
+		m_uUploadedWorldRev = uWorldRev;
+		m_bModelViewIsIdentity = IsViewIdentity() && IsWorldIdentity();
+		m_bModelViewUploadValid = true;
+	}
 
+	const uint64_t uTexRev = GetTextureRev();
+	if (!m_bTexUploadValid || m_uUploadedTexRev != uTexRev) {
 		glMatrixMode(GL_TEXTURE);
 		BenchCountMatrixUpload();
-		glLoadMatrixf((const float*)GetTextureTop());
+		glLoadMatrixf(static_cast<const float*>(*GetTextureTop()));
+		m_uUploadedTexRev = uTexRev;
+		m_bTexMatrixUploadedIsIdentity = IsTextureIdentity();
+		m_bTexUploadValid = true;
 	}
 }
 
@@ -1700,6 +1854,7 @@ RageCompiledGeometryHWOGL::UploadData()
 						GL_STATIC_DRAW_ARB);
 		DebugAssertNoGLError();
 	}
+	g_bHardwareVBOBound = true;
 }
 
 void
@@ -1721,6 +1876,7 @@ RageCompiledGeometryHWOGL::Allocate(const std::vector<msMesh>& vMeshes)
 	DebugFlushGLErrors();
 
 	RageCompiledGeometrySWOGL::Allocate(vMeshes);
+	g_bHardwareVBOBound = true;
 	glBindBufferARB(GL_ARRAY_BUFFER_ARB, m_nPositions);
 	DebugAssertNoGLError();
 	glBufferDataARB(GL_ARRAY_BUFFER_ARB,
@@ -1795,20 +1951,17 @@ RageCompiledGeometryHWOGL::Draw(int iMeshIndex) const
 	glTexCoordPointer(2, GL_FLOAT, 0, nullptr);
 	DebugAssertNoGLError();
 
+	g_bHardwareVBOBound = true;
+
 	// TRICKY:  Don't bind and send normals if lighting is disabled.  This
 	// will save some effort transforming these values.
-	// XXX: We should keep track of these ourself and avoid glGet*()
-	GLboolean bLighting;
-	BenchCountGetQuery();
-	glGetBooleanv(GL_LIGHTING, &bLighting);
-	GLboolean bTextureGenS;
-	BenchCountGetQuery();
-	glGetBooleanv(GL_TEXTURE_GEN_S, &bTextureGenS);
-	GLboolean bTextureGenT;
-	BenchCountGetQuery();
-	glGetBooleanv(GL_TEXTURE_GEN_T, &bTextureGenT);
+	const auto* pOGL = static_cast<const RageDisplay_Legacy*>(DISPLAY);
+	const bool bNeedNormals =
+	  pOGL != nullptr &&
+	  (pOGL->IsLightingEnabled() || pOGL->IsSphereEnvironmentMappingEnabled() ||
+	   pOGL->IsCelShadedEnabled());
 
-	if (bLighting || bTextureGenS || bTextureGenT) {
+	if (bNeedNormals) {
 		glEnableClientState(GL_NORMAL_ARRAY);
 		DebugAssertNoGLError();
 		glBindBufferARB(GL_ARRAY_BUFFER_ARB, m_nNormals);
@@ -1905,8 +2058,161 @@ RageDisplay_Legacy::DeleteCompiledGeometry(RageCompiledGeometry* p)
 }
 
 void
+RageDisplay_Legacy::FlushQuadBatch()
+{
+	if (m_vQuadBatch.empty()) {
+		return;
+	}
+	const size_t uNumVerts = m_vQuadBatch.size();
+	ASSERT((uNumVerts % 4) == 0);
+	const size_t uNumQuads = uNumVerts / 4;
+
+	TurnOffHardwareVBO();
+
+	if (!m_bProjUploadValid ||
+		m_uUploadedCenteringRev != m_uQuadBatchCenteringRev ||
+		m_uUploadedProjRev != m_uQuadBatchProjRev ||
+		m_bUploadedInvertY != m_bQuadBatchInvertY) {
+		glMatrixMode(GL_PROJECTION);
+		BenchCountMatrixUpload();
+		glLoadMatrixf(static_cast<const float*>(m_QuadBatchProjection));
+		m_uUploadedCenteringRev = m_uQuadBatchCenteringRev;
+		m_uUploadedProjRev = m_uQuadBatchProjRev;
+		m_bUploadedInvertY = m_bQuadBatchInvertY;
+		m_bProjUploadValid = true;
+	}
+
+	if (!m_bModelViewIsIdentity) {
+		RageMatrix identity;
+		RageMatrixIdentity(&identity);
+		glMatrixMode(GL_MODELVIEW);
+		BenchCountMatrixUpload();
+		glLoadMatrixf(static_cast<const float*>(identity));
+		m_bModelViewIsIdentity = true;
+		m_bModelViewUploadValid = false;
+	}
+
+	if (!m_bTexUploadValid || !m_bTexMatrixUploadedIsIdentity) {
+		RageMatrix identity;
+		RageMatrixIdentity(&identity);
+		glMatrixMode(GL_TEXTURE);
+		BenchCountMatrixUpload();
+		glLoadMatrixf(static_cast<const float*>(identity));
+		m_bTexMatrixUploadedIsIdentity = true;
+		if (IsTextureIdentity()) {
+			m_uUploadedTexRev = GetTextureRev();
+			m_bTexUploadValid = true;
+		} else {
+			m_bTexUploadValid = false;
+		}
+	}
+
+	SetupVertices(m_vQuadBatch.data(), static_cast<int>(uNumVerts));
+	BenchCountDrawCall();
+	glDrawElements(GL_TRIANGLES,
+				   static_cast<GLsizei>(uNumQuads * 6),
+				   GL_UNSIGNED_SHORT,
+				   m_vQuadIndices.data());
+	m_vQuadBatch.clear();
+}
+
+static void
+AppendTransformedQuads(std::vector<RageSpriteVertex>& batch,
+					   const RageSpriteVertex v[],
+					   int iNumVerts,
+					   const RageMatrix* pMV)
+{
+	const size_t uStart = batch.size();
+	batch.resize(uStart + static_cast<size_t>(iNumVerts));
+	RageSpriteVertex* pDst = batch.data() + uStart;
+	if (pMV == nullptr) {
+		std::copy_n(v, iNumVerts, pDst);
+		return;
+	}
+	const float m00 = pMV->m[0][0], m10 = pMV->m[1][0], m20 = pMV->m[2][0],
+				m30 = pMV->m[3][0];
+	const float m01 = pMV->m[0][1], m11 = pMV->m[1][1], m21 = pMV->m[2][1],
+				m31 = pMV->m[3][1];
+	const float m02 = pMV->m[0][2], m12 = pMV->m[1][2], m22 = pMV->m[2][2],
+				m32 = pMV->m[3][2];
+	for (int i = 0; i < iNumVerts; ++i) {
+		const RageSpriteVertex& src = v[i];
+		RageSpriteVertex& dst = pDst[i];
+		dst.p.x = m00 * src.p.x + m10 * src.p.y + m20 * src.p.z + m30;
+		dst.p.y = m01 * src.p.x + m11 * src.p.y + m21 * src.p.z + m31;
+		dst.p.z = m02 * src.p.x + m12 * src.p.y + m22 * src.p.z + m32;
+		dst.n = src.n;
+		dst.c = src.c;
+		dst.t = src.t;
+	}
+}
+
+void
 RageDisplay_Legacy::DrawQuadsInternal(const RageSpriteVertex v[], int iNumVerts)
 {
+	if (iNumVerts <= 0) {
+		return;
+	}
+	const bool bStateAllowsBatch =
+	  iNumVerts <= 4096 && (iNumVerts % 4) == 0 &&
+	  m_CachedPolygonMode == POLYGON_FILL && m_bZTestValid &&
+	  m_CachedZTestMode == ZTEST_OFF && m_bZWriteValid && !m_bCachedZWrite &&
+	  !m_bCachedLighting && m_uSphereMapMask == 0 && m_iCelShadedStage == 0 &&
+	  (m_uEnabledTexUnitMask & ~1U) == 0 && IsTextureIdentity();
+
+	if (bStateAllowsBatch) {
+		const bool bViewId = IsViewIdentity();
+		const bool bWorldId = IsWorldIdentity();
+		RageMatrix combinedMV;
+		const RageMatrix* pMV = nullptr;
+		if (!bViewId && !bWorldId) {
+			RageMatrixMultiply(&combinedMV, GetViewTop(), GetWorldTop());
+			pMV = &combinedMV;
+		} else if (!bViewId) {
+			pMV = GetViewTop();
+		} else if (!bWorldId) {
+			pMV = GetWorldTop();
+		}
+		const bool bAffineMV =
+		  pMV == nullptr || (pMV->m[0][3] == 0.0f && pMV->m[1][3] == 0.0f &&
+							 pMV->m[2][3] == 0.0f && pMV->m[3][3] == 1.0f);
+		if (bAffineMV) {
+			const uint64_t uCenteringRev = GetCenteringRev();
+			const uint64_t uProjRev = GetProjectionRev();
+			if (!m_vQuadBatch.empty() &&
+				(m_uQuadBatchCenteringRev != uCenteringRev ||
+				 m_uQuadBatchProjRev != uProjRev ||
+				 m_bQuadBatchInvertY != g_bInvertY ||
+				 m_vQuadBatch.size() + static_cast<size_t>(iNumVerts) >
+				   kMaxQuadBatchVerts)) {
+				FlushQuadBatch();
+			}
+			if (m_vQuadBatch.empty()) {
+				m_uQuadBatchCenteringRev = uCenteringRev;
+				m_uQuadBatchProjRev = uProjRev;
+				m_bQuadBatchInvertY = g_bInvertY;
+				if (!m_bProjUploadValid ||
+					m_uUploadedCenteringRev != uCenteringRev ||
+					m_uUploadedProjRev != uProjRev ||
+					m_bUploadedInvertY != g_bInvertY) {
+					RageMatrixMultiply(&m_QuadBatchProjection,
+									   GetCentering(),
+									   GetProjectionTop());
+					if (g_bInvertY) {
+						RageMatrix flip;
+						RageMatrixScale(&flip, +1, -1, +1);
+						RageMatrixMultiply(&m_QuadBatchProjection,
+										   &flip,
+										   &m_QuadBatchProjection);
+					}
+				}
+			}
+			AppendTransformedQuads(m_vQuadBatch, v, iNumVerts, pMV);
+			return;
+		}
+	}
+
+	FlushQuadBatch();
 	TurnOffHardwareVBO();
 	SendCurrentMatrices();
 
@@ -1919,6 +2225,7 @@ void
 RageDisplay_Legacy::DrawQuadStripInternal(const RageSpriteVertex v[],
 										  int iNumVerts)
 {
+	FlushQuadBatch();
 	TurnOffHardwareVBO();
 	SendCurrentMatrices();
 
@@ -1958,6 +2265,7 @@ RageDisplay_Legacy::DrawSymmetricQuadStripInternal(const RageSpriteVertex v[],
 		vIndices[i * 12 + 11] = i * 3 + 5;
 	}
 
+	FlushQuadBatch();
 	TurnOffHardwareVBO();
 	SendCurrentMatrices();
 
@@ -1969,6 +2277,7 @@ RageDisplay_Legacy::DrawSymmetricQuadStripInternal(const RageSpriteVertex v[],
 void
 RageDisplay_Legacy::DrawFanInternal(const RageSpriteVertex v[], int iNumVerts)
 {
+	FlushQuadBatch();
 	TurnOffHardwareVBO();
 	SendCurrentMatrices();
 
@@ -1980,6 +2289,7 @@ RageDisplay_Legacy::DrawFanInternal(const RageSpriteVertex v[], int iNumVerts)
 void
 RageDisplay_Legacy::DrawStripInternal(const RageSpriteVertex v[], int iNumVerts)
 {
+	FlushQuadBatch();
 	TurnOffHardwareVBO();
 	SendCurrentMatrices();
 
@@ -1992,6 +2302,7 @@ void
 RageDisplay_Legacy::DrawTrianglesInternal(const RageSpriteVertex v[],
 										  int iNumVerts)
 {
+	FlushQuadBatch();
 	TurnOffHardwareVBO();
 	SendCurrentMatrices();
 
@@ -2004,10 +2315,12 @@ void
 RageDisplay_Legacy::DrawCompiledGeometryInternal(const RageCompiledGeometry* p,
 												 int iMeshIndex)
 {
+	FlushQuadBatch();
 	TurnOffHardwareVBO();
 	SendCurrentMatrices();
 
 	p->Draw(iMeshIndex);
+	InvalidateStateCache(false, false);
 }
 
 void
@@ -2021,6 +2334,8 @@ RageDisplay_Legacy::DrawLineStripInternal(const RageSpriteVertex v[],
 		return;
 	}
 
+	FlushQuadBatch();
+	TurnOffHardwareVBO();
 	SendCurrentMatrices();
 
 	/* Draw a nice AA'd line loop.  One problem with this is that point and line
@@ -2075,8 +2390,7 @@ RageDisplay_Legacy::DrawLineStripInternal(const RageSpriteVertex v[],
 	 * because points aren't scaled like regular polys--a zero-size point
 	 * will still be drawn. */
 	RageMatrix mat;
-	BenchCountGetQuery();
-	glGetFloatv(GL_MODELVIEW_MATRIX, static_cast<float*>(mat));
+	RageMatrixMultiply(&mat, GetViewTop(), GetWorldTop());
 
 	if (mat.m[0][0] < 1e-5 && mat.m[1][1] < 1e-5)
 		return;
@@ -2090,29 +2404,35 @@ RageDisplay_Legacy::DrawLineStripInternal(const RageSpriteVertex v[],
 	glDisable(GL_POINT_SMOOTH);
 }
 
-static bool
-SetTextureUnit(TextureUnit tu)
+bool
+RageDisplay_Legacy::SetTextureUnit(TextureUnit tu)
 {
 	// If multitexture isn't supported, ignore all textures except for 0.
 	if (!GLEW_ARB_multitexture && tu != TextureUnit_1)
 		return false;
 
-	if (static_cast<int>(tu) > g_iMaxTextureUnits)
+	if (static_cast<int>(tu) >= NUM_TextureUnit ||
+		static_cast<int>(tu) >= g_iMaxTextureUnits)
 		return false;
-	glActiveTextureARB(enum_add2(GL_TEXTURE0_ARB, tu));
+
+	if (m_iActiveTexUnit != static_cast<int>(tu)) {
+		if (GLEW_ARB_multitexture) {
+			glActiveTextureARB(enum_add2(GL_TEXTURE0_ARB, tu));
+		}
+		m_iActiveTexUnit = static_cast<int>(tu);
+	}
 	return true;
 }
 
 void
 RageDisplay_Legacy::ClearAllTextures()
 {
+	FlushQuadBatch();
 	FOREACH_ENUM(TextureUnit, i)
 	SetTexture(i, 0);
 
 	// HACK:  Reset the active texture to 0.
-	// TODO:  Change all texture functions to take a stage number.
-	if (GLEW_ARB_multitexture)
-		glActiveTextureARB(GL_TEXTURE0_ARB);
+	SetTextureUnit(TextureUnit_1);
 }
 
 int
@@ -2127,23 +2447,64 @@ RageDisplay_Legacy::GetNumTextureUnits()
 void
 RageDisplay_Legacy::SetTexture(TextureUnit tu, intptr_t iTexture)
 {
+	if (!GLEW_ARB_multitexture && tu != TextureUnit_1)
+		return;
+	if (static_cast<int>(tu) >= NUM_TextureUnit ||
+		static_cast<int>(tu) >= g_iMaxTextureUnits)
+		return;
+
+	const auto uTex = static_cast<unsigned int>(iTexture);
+	const bool bEnable = uTex != 0;
+	if (m_abTexUnitStateValid[tu]) {
+		if (!bEnable && !m_abTex2DEnabled[tu]) {
+			return;
+		}
+		if (bEnable && m_abTex2DEnabled[tu] && m_auBoundTex[tu] == uTex) {
+			return;
+		}
+	}
+
 	if (!SetTextureUnit(tu))
 		return;
 
-	if (iTexture != 0u) {
-		glEnable(GL_TEXTURE_2D);
-		BenchCountStateCall();
-		glBindTexture(GL_TEXTURE_2D, iTexture);
+	FlushQuadBatch();
+
+	if (bEnable) {
+		if (!m_abTexUnitStateValid[tu] || !m_abTex2DEnabled[tu]) {
+			glEnable(GL_TEXTURE_2D);
+		}
+		if (!m_abTexUnitStateValid[tu] || m_auBoundTex[tu] != uTex) {
+			BenchCountStateCall();
+			glBindTexture(GL_TEXTURE_2D, uTex);
+			m_auBoundTex[tu] = uTex;
+		}
+		m_abTex2DEnabled[tu] = true;
+		m_uEnabledTexUnitMask |= (1U << static_cast<uint32_t>(tu));
 	} else {
-		glDisable(GL_TEXTURE_2D);
+		if (!m_abTexUnitStateValid[tu] || m_abTex2DEnabled[tu]) {
+			glDisable(GL_TEXTURE_2D);
+		}
+		m_abTex2DEnabled[tu] = false;
+		m_uEnabledTexUnitMask &= ~(1U << static_cast<uint32_t>(tu));
 	}
+	m_abTexUnitStateValid[tu] = true;
 }
 
 void
 RageDisplay_Legacy::SetTextureMode(TextureUnit tu, TextureMode tm)
 {
+	if (!GLEW_ARB_multitexture && tu != TextureUnit_1)
+		return;
+	if (static_cast<int>(tu) >= NUM_TextureUnit ||
+		static_cast<int>(tu) >= g_iMaxTextureUnits)
+		return;
+	if (m_abTexModeValid[tu] && m_aCachedTexMode[tu] == tm)
+		return;
+
 	if (!SetTextureUnit(tu))
 		return;
+
+	FlushQuadBatch();
 
 	switch (tm) {
 		case TextureMode_Modulate:
@@ -2162,6 +2523,8 @@ RageDisplay_Legacy::SetTextureMode(TextureUnit tu, TextureMode tm)
 				 * isn't great, but it's better than doing nothing. */
 				BenchCountStateCall();
 				glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+				m_bBlendModeValid = false;
+				m_abTexModeValid[tu] = false;
 				return;
 			}
 
@@ -2195,38 +2558,54 @@ RageDisplay_Legacy::SetTextureMode(TextureUnit tu, TextureMode tm)
 		default:
 			break;
 	}
+	m_aCachedTexMode[tu] = tm;
+	m_abTexModeValid[tu] = true;
 }
 
 void
 RageDisplay_Legacy::SetTextureFiltering(TextureUnit tu, bool b)
 {
-	BenchCountStateCall();
-	glTexParameteri(
-	  GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, b ? GL_LINEAR : GL_NEAREST);
+	if (!GLEW_ARB_multitexture && tu != TextureUnit_1)
+		return;
+	if (static_cast<int>(tu) >= NUM_TextureUnit ||
+		static_cast<int>(tu) >= g_iMaxTextureUnits)
+		return;
+	if (m_abTexUnitStateValid[tu] && !m_abTex2DEnabled[tu])
+		return;
 
-	GLint iMinFilter;
+	const unsigned int uTex = m_auBoundTex[tu];
+	auto it = uTex != 0 ? m_mapTexInfo.find(uTex) : m_mapTexInfo.end();
+	const bool bHasMipMaps = it != m_mapTexInfo.end() && it->second.bHasMipMaps;
+	const GLint iMagFilter = b ? GL_LINEAR : GL_NEAREST;
+	GLint iMinFilter = GL_NEAREST;
 	if (b) {
-		auto iWidth1 = -1;
-		auto iWidth2 = -1;
-		BenchCountGetQuery();
-		glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &iWidth1);
-		BenchCountGetQuery();
-		glGetTexLevelParameteriv(GL_TEXTURE_2D, 1, GL_TEXTURE_WIDTH, &iWidth2);
-		if (iWidth1 > 1 && iWidth2 != 0) {
-			/* Mipmaps are enabled. */
-			if ((*g_pWind->GetActualVideoModeParams()).bTrilinearFiltering)
-				iMinFilter = GL_LINEAR_MIPMAP_LINEAR;
-			else
-				iMinFilter = GL_LINEAR_MIPMAP_NEAREST;
-		} else {
-			iMinFilter = GL_LINEAR;
-		}
-	} else {
-		iMinFilter = GL_NEAREST;
+		iMinFilter =
+		  bHasMipMaps
+			? ((*g_pWind->GetActualVideoModeParams()).bTrilinearFiltering
+				 ? GL_LINEAR_MIPMAP_LINEAR
+				 : GL_LINEAR_MIPMAP_NEAREST)
+			: GL_LINEAR;
 	}
+	if (it != m_mapTexInfo.end() && it->second.magFilter == iMagFilter &&
+		it->second.minFilter == iMinFilter) {
+		return;
+	}
+	if (!SetTextureUnit(tu))
+		return;
+	FlushQuadBatch();
 
-	BenchCountStateCall();
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, iMinFilter);
+	if (it == m_mapTexInfo.end() || it->second.magFilter != iMagFilter) {
+		BenchCountStateCall();
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, iMagFilter);
+	}
+	if (it == m_mapTexInfo.end() || it->second.minFilter != iMinFilter) {
+		BenchCountStateCall();
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, iMinFilter);
+	}
+	if (it != m_mapTexInfo.end()) {
+		it->second.magFilter = iMagFilter;
+		it->second.minFilter = iMinFilter;
+	}
 }
 
 void
@@ -2235,63 +2614,49 @@ RageDisplay_Legacy::SetEffectMode(EffectMode effect)
 	if (!GLEW_ARB_fragment_program || !GLEW_ARB_shading_language_100 ||
 		!GLEW_ARB_shader_objects)
 		return;
+	if (effect < 0 || effect >= NUM_EffectMode)
+		return;
 
-	GLhandleARB hShader = 0;
-	switch (effect) {
-		case EffectMode_Normal:
-			hShader = 0;
-			break;
-		case EffectMode_Unpremultiply:
-			hShader = g_bUnpremultiplyShader;
-			break;
-		case EffectMode_ColorBurn:
-			hShader = g_bColorBurnShader;
-			break;
-		case EffectMode_ColorDodge:
-			hShader = g_bColorDodgeShader;
-			break;
-		case EffectMode_VividLight:
-			hShader = g_bVividLightShader;
-			break;
-		case EffectMode_HardMix:
-			hShader = g_hHardMixShader;
-			break;
-		case EffectMode_Overlay:
-			hShader = g_hOverlayShader;
-			break;
-		case EffectMode_Screen:
-			hShader = g_hScreenShader;
-			break;
-		case EffectMode_YUYV422:
-			hShader = g_hYUYV422Shader;
-			break;
-		default:
-			break;
+	const auto& shader = g_aEffectShaders[effect];
+	GLint iTexWidth = -1;
+	if (effect == EffectMode_YUYV422 && shader.hProgram != 0) {
+		const unsigned int uTex = m_auBoundTex[TextureUnit_1];
+		const auto it =
+		  uTex != 0 ? m_mapTexInfo.find(uTex) : m_mapTexInfo.end();
+		if (it != m_mapTexInfo.end()) {
+			iTexWidth = it->second.iWidth;
+		} else if (SetTextureUnit(TextureUnit_1)) {
+			BenchCountGetQuery();
+			glGetTexLevelParameteriv(
+			  GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &iTexWidth);
+		}
 	}
+
+	if (m_bEffectModeValid && m_CachedEffectMode == effect &&
+		(effect != EffectMode_YUYV422 ||
+		 m_iCachedEffectTexWidth == iTexWidth)) {
+		return;
+	}
+
+	FlushQuadBatch();
+	const GLhandleARB hShader = shader.hProgram;
 
 	DebugFlushGLErrors();
 	BenchCountStateCall();
 	glUseProgramObjectARB(hShader);
+	m_CachedEffectMode = effect;
+	m_iCachedEffectTexWidth = iTexWidth;
+	m_bEffectModeValid = true;
 	if (hShader == 0)
 		return;
-	BenchCountGetQuery();
-	const auto iTexture1 = glGetUniformLocationARB(hShader, "Texture1");
-	BenchCountGetQuery();
-	const auto iTexture2 = glGetUniformLocationARB(hShader, "Texture2");
 	BenchCountStateCall();
-	glUniform1iARB(iTexture1, 0);
+	glUniform1iARB(shader.iTex1, 0);
 	BenchCountStateCall();
-	glUniform1iARB(iTexture2, 1);
+	glUniform1iARB(shader.iTex2, 1);
 
 	if (effect == EffectMode_YUYV422) {
-		BenchCountGetQuery();
-		const auto iTextureWidthUniform =
-		  glGetUniformLocationARB(hShader, "TextureWidth");
-		GLint iWidth;
-		BenchCountGetQuery();
-		glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &iWidth);
 		BenchCountStateCall();
-		glUniform1iARB(iTextureWidthUniform, iWidth);
+		glUniform1iARB(shader.iTexWidth, iTexWidth);
 	}
 
 	DebugAssertNoGLError();
@@ -2327,6 +2692,10 @@ RageDisplay_Legacy::IsEffectModeSupported(EffectMode effect)
 void
 RageDisplay_Legacy::SetBlendMode(BlendMode mode)
 {
+	if (m_bBlendModeValid && m_CachedBlendMode == mode)
+		return;
+
+	FlushQuadBatch();
 	glEnable(GL_BLEND);
 
 	if (glBlendEquation != nullptr) {
@@ -2406,29 +2775,36 @@ RageDisplay_Legacy::SetBlendMode(BlendMode mode)
 		glBlendFuncSeparateEXT(iSourceRGB, iDestRGB, iSourceAlpha, iDestAlpha);
 	else
 		glBlendFunc(iSourceRGB, iDestRGB);
+	m_CachedBlendMode = mode;
+	m_bBlendModeValid = true;
 }
 
 bool
 RageDisplay_Legacy::IsZWriteEnabled() const
 {
-	bool a;
+	if (m_bZWriteValid)
+		return m_bCachedZWrite;
+	GLboolean a = GL_FALSE;
 	BenchCountGetQuery();
-	glGetBooleanv(GL_DEPTH_WRITEMASK, (unsigned char*)&a);
-	return a;
+	glGetBooleanv(GL_DEPTH_WRITEMASK, &a);
+	return a != GL_FALSE;
 }
 
 bool
 RageDisplay_Legacy::IsZTestEnabled() const
 {
-	GLenum a;
+	if (m_bZTestValid)
+		return m_CachedZTestMode != ZTEST_OFF;
+	GLint a = GL_ALWAYS;
 	BenchCountGetQuery();
-	glGetIntegerv(GL_DEPTH_FUNC, (GLint*)&a);
+	glGetIntegerv(GL_DEPTH_FUNC, &a);
 	return a != GL_ALWAYS;
 }
 
 void
 RageDisplay_Legacy::ClearZBuffer()
 {
+	FlushQuadBatch();
 	const auto write = IsZWriteEnabled();
 	SetZWrite(true);
 	glClear(GL_DEPTH_BUFFER_BIT);
@@ -2438,22 +2814,35 @@ RageDisplay_Legacy::ClearZBuffer()
 void
 RageDisplay_Legacy::SetZWrite(bool b)
 {
+	if (m_bZWriteValid && m_bCachedZWrite == b)
+		return;
+	FlushQuadBatch();
 	BenchCountStateCall();
 	glDepthMask(b);
+	m_bCachedZWrite = b;
+	m_bZWriteValid = true;
 }
 
 void
 RageDisplay_Legacy::SetZBias(float f)
 {
+	if (m_bZBiasValid && m_fCachedZBias == f)
+		return;
+	FlushQuadBatch();
 	const auto fNear = SCALE(f, 0.0f, 1.0f, 0.05f, 0.0f);
 	const auto fFar = SCALE(f, 0.0f, 1.0f, 1.0f, 0.95f);
 
 	glDepthRange(fNear, fFar);
+	m_fCachedZBias = f;
+	m_bZBiasValid = true;
 }
 
 void
 RageDisplay_Legacy::SetZTestMode(ZTestMode mode)
 {
+	if (m_bZTestValid && m_CachedZTestMode == mode)
+		return;
+	FlushQuadBatch();
 	glEnable(GL_DEPTH_TEST);
 	switch (mode) {
 		case ZTEST_OFF:
@@ -2471,21 +2860,45 @@ RageDisplay_Legacy::SetZTestMode(ZTestMode mode)
 		default:
 			FAIL_M(ssprintf("Invalid ZTestMode: %i", mode));
 	}
+	m_CachedZTestMode = mode;
+	m_bZTestValid = true;
 }
 
 void
 RageDisplay_Legacy::SetTextureWrapping(TextureUnit tu, bool b)
 {
-	/* This should be per-texture-unit state, but it's per-texture state in
-	 * OpenGl, so we'll behave incorrectly if the same texture is used in more
-	 * than one texture unit simultaneously with different wrapping. */
-	SetTextureUnit(tu);
+	if (!GLEW_ARB_multitexture && tu != TextureUnit_1)
+		return;
+	if (static_cast<int>(tu) >= NUM_TextureUnit ||
+		static_cast<int>(tu) >= g_iMaxTextureUnits)
+		return;
+	if (m_abTexUnitStateValid[tu] && !m_abTex2DEnabled[tu])
+		return;
 
-	const GLenum mode = b ? GL_REPEAT : GL_CLAMP_TO_EDGE;
-	BenchCountStateCall();
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, mode);
-	BenchCountStateCall();
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, mode);
+	const GLint mode = b ? GL_REPEAT : GL_CLAMP_TO_EDGE;
+	const unsigned int uTex = m_auBoundTex[tu];
+	auto it = uTex != 0 ? m_mapTexInfo.find(uTex) : m_mapTexInfo.end();
+	if (it != m_mapTexInfo.end() && it->second.wrapS == mode &&
+		it->second.wrapT == mode) {
+		return;
+	}
+
+	if (!SetTextureUnit(tu))
+		return;
+	FlushQuadBatch();
+
+	if (it == m_mapTexInfo.end() || it->second.wrapS != mode) {
+		BenchCountStateCall();
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, mode);
+	}
+	if (it == m_mapTexInfo.end() || it->second.wrapT != mode) {
+		BenchCountStateCall();
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, mode);
+	}
+	if (it != m_mapTexInfo.end()) {
+		it->second.wrapS = mode;
+		it->second.wrapT = mode;
+	}
 }
 
 void
@@ -2500,11 +2913,8 @@ RageDisplay_Legacy::SetMaterial(const RageColor& emissive,
 	// want Models to have basic color and transparency.
 	// We can do this fake lighting by setting the vertex color.
 	// XXX: unintended: SetLighting must be called before SetMaterial
-	GLboolean bLighting;
-	BenchCountGetQuery();
-	glGetBooleanv(GL_LIGHTING, &bLighting);
-
-	if (bLighting) {
+	FlushQuadBatch();
+	if (m_bCachedLighting) {
 		glMaterialfv(GL_FRONT, GL_EMISSION, emissive);
 		glMaterialfv(GL_FRONT, GL_AMBIENT, ambient);
 		glMaterialfv(GL_FRONT, GL_DIFFUSE, diffuse);
@@ -2522,15 +2932,22 @@ RageDisplay_Legacy::SetMaterial(const RageColor& emissive,
 void
 RageDisplay_Legacy::SetLighting(bool b)
 {
+	if (m_bLightingValid && m_bCachedLighting == b)
+		return;
+	FlushQuadBatch();
+	BenchCountStateCall();
 	if (b)
 		glEnable(GL_LIGHTING);
 	else
 		glDisable(GL_LIGHTING);
+	m_bCachedLighting = b;
+	m_bLightingValid = true;
 }
 
 void
 RageDisplay_Legacy::SetLightOff(int index)
 {
+	FlushQuadBatch();
 	glDisable(GL_LIGHT0 + index);
 }
 
@@ -2541,8 +2958,10 @@ RageDisplay_Legacy::SetLightDirectional(int index,
 										const RageColor& specular,
 										const RageVector3& dir)
 {
+	FlushQuadBatch();
 	// Light coordinates are transformed by the modelview matrix, but
 	// we are being passed in world-space coords.
+	glMatrixMode(GL_MODELVIEW);
 	glPushMatrix();
 	glLoadIdentity();
 
@@ -2559,6 +2978,9 @@ RageDisplay_Legacy::SetLightDirectional(int index,
 void
 RageDisplay_Legacy::SetCullMode(CullMode mode)
 {
+	if (m_bCullModeValid && m_CachedCullMode == mode)
+		return;
+	FlushQuadBatch();
 	if (mode != CULL_NONE)
 		glEnable(GL_CULL_FACE);
 	switch (mode) {
@@ -2571,11 +2993,14 @@ RageDisplay_Legacy::SetCullMode(CullMode mode)
 			glCullFace(GL_FRONT);
 			break;
 		case CULL_NONE:
+			BenchCountStateCall();
 			glDisable(GL_CULL_FACE);
 			break;
 		default:
 			FAIL_M(ssprintf("Invalid CullMode: %i", mode));
 	}
+	m_CachedCullMode = mode;
+	m_bCullModeValid = true;
 }
 
 const RageDisplay::RagePixelFormatDesc*
@@ -2594,26 +3019,32 @@ RageDisplay_Legacy::SupportsThreadedRendering()
 void
 RageDisplay_Legacy::BeginConcurrentRenderingMainThread()
 {
+	FlushQuadBatch();
 	g_pWind->BeginConcurrentRenderingMainThread();
+	InvalidateStateCache(false, true);
 }
 
 void
 RageDisplay_Legacy::EndConcurrentRenderingMainThread()
 {
 	g_pWind->EndConcurrentRenderingMainThread();
+	InvalidateStateCache(false, true);
 }
 
 void
 RageDisplay_Legacy::BeginConcurrentRendering()
 {
 	g_pWind->BeginConcurrentRendering();
+	InvalidateStateCache(false, true);
 	RageDisplay::BeginConcurrentRendering();
 }
 
 void
 RageDisplay_Legacy::EndConcurrentRendering()
 {
+	FlushQuadBatch();
 	g_pWind->EndConcurrentRendering();
+	InvalidateStateCache(false, true);
 }
 
 void
@@ -2621,6 +3052,16 @@ RageDisplay_Legacy::DeleteTexture(intptr_t iTexture)
 {
 	if (iTexture == 0)
 		return;
+
+	FlushQuadBatch();
+	const auto uTex = static_cast<unsigned int>(iTexture);
+	m_mapTexInfo.erase(uTex);
+	for (int i = 0; i < NUM_TextureUnit; ++i) {
+		if (m_auBoundTex[i] == uTex) {
+			m_auBoundTex[i] = 0;
+			m_abTexUnitStateValid[i] = false;
+		}
+	}
 
 	if (g_mapRenderTargets.find(iTexture) != g_mapRenderTargets.end()) {
 		delete g_mapRenderTargets[iTexture];
@@ -2757,15 +3198,26 @@ RageDisplay_Legacy::CreateTexture(RagePixelFormat pixfmt,
 		}
 	}
 
+	FlushQuadBatch();
 	SetTextureUnit(TextureUnit_1);
 
 	// allocate OpenGL texture resource
-	intptr_t iTexHandle;
+	intptr_t iTexHandle = 0;
 	glGenTextures(1, reinterpret_cast<GLuint*>(&iTexHandle));
 	ASSERT(iTexHandle != 0);
 
+	const auto uTex = static_cast<unsigned int>(iTexHandle);
+	const bool bUseNPOT =
+	  SupportsNonPowerOfTwoTextures() && pImg->pixels != nullptr;
+	const int iTexWidth = bUseNPOT ? pImg->w : power_of_two(pImg->w);
+	const int iTexHeight = bUseNPOT ? pImg->h : power_of_two(pImg->h);
+	const bool bHasMipMaps = bGenerateMipMaps && pImg->pixels != nullptr &&
+							 (iTexWidth > 1 || iTexHeight > 1);
+
 	BenchCountStateCall();
-	glBindTexture(GL_TEXTURE_2D, iTexHandle);
+	glBindTexture(GL_TEXTURE_2D, uTex);
+	m_auBoundTex[TextureUnit_1] = uTex;
+	m_abTexUnitStateValid[TextureUnit_1] = false;
 
 	if ((*g_pWind->GetActualVideoModeParams()).bAnisotropicFiltering &&
 		GLEW_EXT_texture_filter_anisotropic) {
@@ -2778,9 +3230,25 @@ RageDisplay_Legacy::CreateTexture(RagePixelFormat pixfmt,
 						fLargestSupportedAnisotropy);
 	}
 
-	SetTextureFiltering(TextureUnit_1, true);
-	SetTextureWrapping(TextureUnit_1, false);
+	const GLint iInitMag = GL_LINEAR;
+	const GLint iInitMin =
+	  bHasMipMaps ? ((*g_pWind->GetActualVideoModeParams()).bTrilinearFiltering
+					   ? GL_LINEAR_MIPMAP_LINEAR
+					   : GL_LINEAR_MIPMAP_NEAREST)
+				  : GL_LINEAR;
+	BenchCountStateCall();
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, iInitMag);
+	BenchCountStateCall();
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, iInitMin);
+	BenchCountStateCall();
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	BenchCountStateCall();
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	m_mapTexInfo[uTex] =
+	  OGLTexInfo{ iTexWidth, iTexHeight, glTexFormat,	   bHasMipMaps,
+				  iInitMin,	 iInitMag,	 GL_CLAMP_TO_EDGE, GL_CLAMP_TO_EDGE };
 
+	glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 	glPixelStorei(GL_UNPACK_ROW_LENGTH, pImg->pitch / pImg->fmt.BytesPerPixel);
 
 	if (pixfmt == RagePixelFormat_PAL) {
@@ -2827,14 +3295,16 @@ RageDisplay_Legacy::CreateTexture(RagePixelFormat pixfmt,
 			glTexImage2D(GL_TEXTURE_2D,
 						 0,
 						 glTexFormat,
-						 power_of_two(pImg->w),
-						 power_of_two(pImg->h),
+						 iTexWidth,
+						 iTexHeight,
 						 0,
 						 glImageFormat,
 						 glImageType,
 						 pImg->pixels);
 
-			glGenerateMipmap(GL_TEXTURE_2D);
+			if (bHasMipMaps) {
+				glGenerateMipmap(GL_TEXTURE_2D);
+			}
 
 			DebugAssertNoGLError();
 		}
@@ -2845,14 +3315,14 @@ RageDisplay_Legacy::CreateTexture(RagePixelFormat pixfmt,
 		// which updates the image as it plays but doesn't initialize it
 		// when creating the texture handle
 		glTexImage2D(GL_TEXTURE_2D,
-						0,
-						glTexFormat,
-						power_of_two(pImg->w),
-						power_of_two(pImg->h),
-						0,
-						glImageFormat,
-						glImageType,
-						pImg->pixels);
+					 0,
+					 glTexFormat,
+					 iTexWidth,
+					 iTexHeight,
+					 0,
+					 glImageFormat,
+					 glImageType,
+					 pImg->pixels);
 		DebugAssertNoGLError();
 	}
 
@@ -2868,6 +3338,7 @@ RageDisplay_Legacy::CreateTexture(RagePixelFormat pixfmt,
 	}
 
 	glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+	glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
 
 	if (bFreeImg)
 		delete pImg;
@@ -2965,13 +3436,19 @@ RageDisplay_Legacy::UpdateTexture(intptr_t iTexHandle,
 								  int iWidth,
 								  int iHeight)
 {
+	FlushQuadBatch();
+	SetTextureUnit(TextureUnit_1);
+	const auto uTex = static_cast<unsigned int>(iTexHandle);
 	BenchCountStateCall();
-	glBindTexture(GL_TEXTURE_2D, iTexHandle);
+	glBindTexture(GL_TEXTURE_2D, uTex);
+	m_auBoundTex[TextureUnit_1] = uTex;
+	m_abTexUnitStateValid[TextureUnit_1] = false;
 
 	bool bFreeImg;
 	const auto SurfacePixFmt =
 	  GetImgPixelFormat(pImg, bFreeImg, iWidth, iHeight, false);
 
+	glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 	glPixelStorei(GL_UNPACK_ROW_LENGTH, pImg->pitch / pImg->fmt.BytesPerPixel);
 
 	const auto glImageFormat = g_GLPixFmtInfo[SurfacePixFmt].format;
@@ -2981,11 +3458,16 @@ RageDisplay_Legacy::UpdateTexture(intptr_t iTexHandle,
 	 * set up glPixelMap. */
 	if (pImg->fmt.palette) {
 		GLenum glTexFormat = 0;
-		BenchCountGetQuery();
-		glGetTexLevelParameteriv(GL_PROXY_TEXTURE_2D,
-								 0,
-								 GLenum(GL_TEXTURE_INTERNAL_FORMAT),
-								 (GLint*)&glTexFormat);
+		const auto it = m_mapTexInfo.find(uTex);
+		if (it != m_mapTexInfo.end()) {
+			glTexFormat = it->second.glInternalFormat;
+		} else {
+			BenchCountGetQuery();
+			glGetTexLevelParameteriv(GL_TEXTURE_2D,
+									 0,
+									 GLenum(GL_TEXTURE_INTERNAL_FORMAT),
+									 reinterpret_cast<GLint*>(&glTexFormat));
+		}
 		SetPixelMapForSurface(glImageFormat, glTexFormat, pImg->fmt.palette);
 	}
 
@@ -3001,6 +3483,7 @@ RageDisplay_Legacy::UpdateTexture(intptr_t iTexHandle,
 
 	/* Must unset PixelStore when we're done! */
 	glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+	glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
 	glFlush();
 
 	if (bFreeImg)
@@ -3331,6 +3814,8 @@ RageDisplay_Legacy::CreateRenderTarget(const RenderTargetParam& param,
 									   int& iTextureWidthOut,
 									   int& iTextureHeightOut)
 {
+	FlushQuadBatch();
+
 	RenderTarget* pTarget;
 	if (GLEW_EXT_framebuffer_object)
 		pTarget = new RenderTarget_FramebufferObject;
@@ -3345,7 +3830,19 @@ RageDisplay_Legacy::CreateRenderTarget(const RenderTargetParam& param,
 
 		ASSERT(g_mapRenderTargets.find(iTexture) == g_mapRenderTargets.end());
 		g_mapRenderTargets[iTexture] = pTarget;
+		if (iTexture != 0) {
+			const GLenum internalformat =
+			  (param.bFloat && GLEW_ARB_texture_float)
+				? (param.bWithAlpha ? GL_RGBA16F_ARB : GL_RGB16F_ARB)
+				: (param.bWithAlpha ? GL_RGBA8 : GL_RGB8);
+			m_mapTexInfo[static_cast<unsigned int>(iTexture)] =
+			  OGLTexInfo{ iTextureWidthOut, iTextureHeightOut,
+						  internalformat,	false,
+						  GL_LINEAR,		GL_LINEAR,
+						  GL_CLAMP_TO_EDGE, GL_CLAMP_TO_EDGE };
+		}
 	}
+	InvalidateStateCache(false, false);
 
 	return iTexture;
 }
@@ -3362,6 +3859,8 @@ RageDisplay_Legacy::GetRenderTarget()
 void
 RageDisplay_Legacy::SetRenderTarget(intptr_t iTexture, bool bPreserveTexture)
 {
+	FlushQuadBatch();
+
 	if (iTexture == 0) {
 		g_bInvertY = false;
 		glFrontFace(GL_CCW);
@@ -3378,6 +3877,7 @@ RageDisplay_Legacy::SetRenderTarget(intptr_t iTexture, bool bPreserveTexture)
 		if (g_pCurrentRenderTarget != nullptr)
 			g_pCurrentRenderTarget->FinishRenderingTo();
 		g_pCurrentRenderTarget = nullptr;
+		InvalidateStateCache(false, false);
 		return;
 	}
 
@@ -3402,6 +3902,7 @@ RageDisplay_Legacy::SetRenderTarget(intptr_t iTexture, bool bPreserveTexture)
 
 	/* The render target may be in a different OpenGL context, so re-send
 	 * state.  Push matrixes affected by SetDefaultRenderStates. */
+	InvalidateStateCache(false, false);
 	DISPLAY->CameraPushMatrix();
 	SetDefaultRenderStates();
 
@@ -3424,6 +3925,9 @@ RageDisplay_Legacy::SetRenderTarget(intptr_t iTexture, bool bPreserveTexture)
 void
 RageDisplay_Legacy::SetPolygonMode(PolygonMode pm)
 {
+	if (m_bPolygonModeValid && m_CachedPolygonMode == pm)
+		return;
+	FlushQuadBatch();
 	GLenum m;
 	switch (pm) {
 		case POLYGON_FILL:
@@ -3435,12 +3939,16 @@ RageDisplay_Legacy::SetPolygonMode(PolygonMode pm)
 		default:
 			FAIL_M(ssprintf("Invalid PolygonMode: %i", pm));
 	}
+	BenchCountStateCall();
 	glPolygonMode(GL_FRONT_AND_BACK, m);
+	m_CachedPolygonMode = pm;
+	m_bPolygonModeValid = true;
 }
 
 void
 RageDisplay_Legacy::SetLineWidth(float fWidth)
 {
+	FlushQuadBatch();
 	glLineWidth(fWidth);
 }
 
@@ -3485,6 +3993,9 @@ RageDisplay_Legacy::GetTextureDiagnostics(unsigned iTexture) const
 void
 RageDisplay_Legacy::SetAlphaTest(bool b)
 {
+	if (m_bAlphaTestValid && m_bCachedAlphaTest == b)
+		return;
+	FlushQuadBatch();
 	// Previously this was 0.01, rather than 0x01.
 	BenchCountStateCall();
 	glAlphaFunc(GL_GREATER, 0.00390625 /* 1/256 */);
@@ -3492,6 +4003,8 @@ RageDisplay_Legacy::SetAlphaTest(bool b)
 		glEnable(GL_ALPHA_TEST);
 	else
 		glDisable(GL_ALPHA_TEST);
+	m_bCachedAlphaTest = b;
+	m_bAlphaTestValid = true;
 }
 
 /*
@@ -3551,17 +4064,29 @@ RageDisplay_Legacy::SupportsPerVertexMatrixScale()
 void
 RageDisplay_Legacy::SetSphereEnvironmentMapping(TextureUnit tu, bool b)
 {
+	if (!GLEW_ARB_multitexture && tu != TextureUnit_1)
+		return;
+	if (static_cast<int>(tu) >= NUM_TextureUnit ||
+		static_cast<int>(tu) >= g_iMaxTextureUnits)
+		return;
+
+	const uint32_t uBit = 1U << static_cast<uint32_t>(tu);
+	if (((m_uSphereMapMask & uBit) != 0) == b)
+		return;
 	if (!SetTextureUnit(tu))
 		return;
 
+	FlushQuadBatch();
 	if (b) {
 		glTexGeni(GL_S, GL_TEXTURE_GEN_MODE, GL_SPHERE_MAP);
 		glTexGeni(GL_T, GL_TEXTURE_GEN_MODE, GL_SPHERE_MAP);
 		glEnable(GL_TEXTURE_GEN_S);
 		glEnable(GL_TEXTURE_GEN_T);
+		m_uSphereMapMask |= uBit;
 	} else {
 		glDisable(GL_TEXTURE_GEN_S);
 		glDisable(GL_TEXTURE_GEN_T);
+		m_uSphereMapMask &= ~uBit;
 	}
 }
 
@@ -3573,18 +4098,31 @@ RageDisplay_Legacy::SetCelShaded(int stage)
 	if (!GLEW_ARB_fragment_program && !GL_ARB_shading_language_100)
 		return; // not supported
 
+	const int iEffectiveStage = (stage == 1 || stage == 2) ? stage : 0;
+	if (m_iCelShadedStage == iEffectiveStage &&
+		(iEffectiveStage != 0 ||
+		 (m_bEffectModeValid && m_CachedEffectMode == EffectMode_Normal))) {
+		return;
+	}
+	FlushQuadBatch();
 	BenchCountStateCall();
-	switch (stage) {
+	switch (iEffectiveStage) {
 		case 1:
 			glUseProgramObjectARB(g_gShellShader);
+			m_bEffectModeValid = false;
 			break;
 		case 2:
 			glUseProgramObjectARB(g_gCelShader);
+			m_bEffectModeValid = false;
 			break;
 		default:
 			glUseProgramObjectARB(0);
+			m_CachedEffectMode = EffectMode_Normal;
+			m_iCachedEffectTexWidth = -1;
+			m_bEffectModeValid = true;
 			break;
 	}
+	m_iCelShadedStage = iEffectiveStage;
 }
 
 bool
