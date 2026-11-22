@@ -8,7 +8,10 @@
 #include "Etterna/Actor/Base/Sprite.h"
 #include "RageUtil/Graphics/RageTextureRenderTarget.h"
 
+#include <array>
 #include <unordered_map>
+
+struct __GLsync;
 
 /* Making an OpenGL call doesn't also flush the error state; if we happen
  * to have an error from a previous call, then the assert below will fail.
@@ -72,6 +75,7 @@ class RageDisplay_Legacy : public RageDisplay
 
 	bool BeginFrame() override;
 	void EndFrame() override;
+	void WaitForGpuFrameSlot() override;
 	const ActualVideoModeParams* GetActualVideoModeParams() const override;
 	void SetBlendMode(BlendMode mode) override;
 	bool SupportsTextureFormat(RagePixelFormat pixfmt,
@@ -282,6 +286,10 @@ class RageDisplay_Legacy : public RageDisplay
 	bool m_bHasPrevFrameEnd{ false };
 	std::chrono::steady_clock::time_point m_BenchDrawStart{};
 	std::chrono::steady_clock::time_point m_BenchPrevFrameEnd{};
+
+	void DestroyFrameFences(bool bDeleteGLObjects);
+	std::array<__GLsync*, 2> m_aFrameFences{ nullptr, nullptr };
+	size_t m_uFenceWriteIdx{ 0 };
 
 	RageTextureRenderTarget* offscreenRenderTarget = nullptr;
 };
