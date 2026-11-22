@@ -564,7 +564,7 @@ RageDisplay::RageDisplay()
 	g_TextureStack = MatrixStack();
 
 	if (s_bBenchConfigured) {
-		m_bBenchEnabled = true;
+		m_BenchState = BenchPhaseState::Idle;
 		m_sBenchOutputPath = s_sBenchOutputPath;
 		m_fBenchFixedDt = s_fBenchFixedDt;
 		m_uBenchSeed = s_uBenchSeed;
@@ -1496,7 +1496,9 @@ RageDisplay::ConfigureBenchmark(const std::string& sOutputPath,
 	}
 
 	if (DISPLAY != nullptr) {
-		DISPLAY->m_bBenchEnabled = true;
+		if (DISPLAY->m_BenchState == BenchPhaseState::Disabled) {
+			DISPLAY->m_BenchState = BenchPhaseState::Idle;
+		}
 		DISPLAY->m_sBenchOutputPath = sOutputPath;
 		DISPLAY->m_fBenchFixedDt = fFixedDeltaSeconds;
 		DISPLAY->m_uBenchSeed = uSeed;
@@ -1506,13 +1508,12 @@ RageDisplay::ConfigureBenchmark(const std::string& sOutputPath,
 void
 RageDisplay::BenchBeginPhase(const std::string& sPhaseName, bool bIsWarmup)
 {
-	if (!m_bBenchEnabled) {
+	if (!IsBenchEnabled()) {
 		return;
 	}
 	m_sBenchPhaseName = sPhaseName;
-	m_bBenchPhaseActive = true;
-	m_bBenchPhaseWarmup = bIsWarmup;
-	m_bBenchRecording = !bIsWarmup;
+	m_BenchState =
+	  bIsWarmup ? BenchPhaseState::Warmup : BenchPhaseState::Recording;
 	m_BenchCounters = BenchCounters{};
 	m_vBenchFrameUs.clear();
 	m_vBenchCpuUpdateUs.clear();
@@ -1532,13 +1533,12 @@ RageDisplay::BenchBeginPhase(const std::string& sPhaseName, bool bIsWarmup)
 auto
 RageDisplay::BenchEndPhase() -> bool
 {
-	if (!m_bBenchEnabled || !m_bBenchPhaseActive) {
+	if (m_BenchState != BenchPhaseState::Warmup &&
+		m_BenchState != BenchPhaseState::Recording) {
 		return false;
 	}
-	const bool bWasWarmup = m_bBenchPhaseWarmup;
-	m_bBenchRecording = false;
-	m_bBenchPhaseActive = false;
-	m_bBenchPhaseWarmup = false;
+	const bool bWasWarmup = (m_BenchState == BenchPhaseState::Warmup);
+	m_BenchState = BenchPhaseState::Idle;
 	OnBenchEndPhase();
 	if (bWasWarmup) {
 		return true;
@@ -1643,7 +1643,7 @@ RageDisplay::BenchRecordFrameTimings(double fFrameUs,
 									 double fCpuDrawUs,
 									 double fPresentUs)
 {
-	if (!m_bBenchRecording) {
+	if (m_BenchState != BenchPhaseState::Recording) {
 		return;
 	}
 	m_vBenchFrameUs.push_back(fFrameUs);
