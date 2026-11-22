@@ -442,6 +442,25 @@ ScreenManager::PopTopScreenInternal(bool bSendLoseFocus)
 	return ls.m_SendOnPop;
 }
 
+auto
+ScreenManager::CanProcessInputBeforeUpdate() const -> bool
+{
+	if (g_ScreenStack.empty()) {
+		return false;
+	}
+	const Screen* pTop = g_ScreenStack.back().m_pScreen;
+	return pTop != nullptr && !pTop->IsFirstUpdate() &&
+		   m_PopTopScreen == SM_Invalid && m_sDelayedScreen.empty();
+}
+
+void
+ScreenManager::UpdateBeforeInput()
+{
+	if (Screen* pTop = GetTopScreen()) {
+		pTop->UpdateBeforeInput();
+	}
+}
+
 void
 ScreenManager::Update(float fDeltaTime)
 {
