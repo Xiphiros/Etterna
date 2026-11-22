@@ -40,7 +40,10 @@ class LowLevelWindow_X11 : public LowLevelWindow
   private:
 	void RestoreOutputConfig();
 
-	bool m_bWasWindowed;
+	bool m_bWasWindowed{ true };
+	bool m_bWasOverrideRedirect{ false };
+	bool m_bChangedDisplayMode{ false };
+	bool m_bGrabbedKeyboard{ false };
 	ActualVideoModeParams CurrentParams;
 };
 
