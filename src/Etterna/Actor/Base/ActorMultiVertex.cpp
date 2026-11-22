@@ -215,11 +215,29 @@ ActorMultiVertex::DrawPrimitives()
 	Actor::SetTextureRenderStates();
 	DISPLAY->SetEffectMode(_EffectMode);
 
-	// set temporary diffuse and glow
-	static AMV_TweenState TS;
+	const bool bHasDiffusePass = m_pTempState->diffuse[0].a > 0;
+	const bool bHasGlowPass = m_pTempState->glow.a > 0;
+	if (!bHasDiffusePass && !bHasGlowPass) {
+		return;
+	}
+	if (bHasDiffusePass && m_pTempState->diffuse[0] == RageColor(1, 1, 1, 1) &&
+		!bHasGlowPass) {
+		AMV_TempState = &AMV_current;
+		DISPLAY->SetTextureMode(TextureUnit_1, _TextureMode);
+		DrawInternal(&AMV_current);
+		return;
+	}
 
+	// Copy only the fields read by DrawInternal when vertex tint or glow
+	// mutates colors.
+	static AMV_TweenState TS;
 	AMV_TempState = &TS;
-	TS = AMV_current;
+	TS._DrawMode = AMV_current._DrawMode;
+	TS.FirstToDraw = AMV_current.FirstToDraw;
+	TS.NumToDraw = AMV_current.NumToDraw;
+	TS.line_width = AMV_current.line_width;
+	TS.vertices.assign(AMV_current.vertices.begin(),
+					   AMV_current.vertices.end());
 
 	// skip if no change or fully transparent
 	if (m_pTempState->diffuse[0] != RageColor(1, 1, 1, 1) &&
