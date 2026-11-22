@@ -8,6 +8,7 @@
 #include "RageUtil/Graphics/Display/PipelineHandle.h"
 
 #include <chrono>
+#include <cstdint>
 #include <set>
 #include <utility>
 
@@ -598,11 +599,12 @@ protected:
 								   uint32_t uSeed);
 	[[nodiscard]] auto IsBenchEnabled() const -> bool
 	{
-		return m_bBenchEnabled;
+		return m_BenchState != BenchPhaseState::Disabled;
 	}
 	[[nodiscard]] auto IsBenchRecording() const -> bool
 	{
-		return m_bBenchRecording && !m_bBenchSuppressCounters;
+		return m_BenchState == BenchPhaseState::Recording &&
+			   !m_bBenchSuppressCounters;
 	}
 	void BenchBeginPhase(const std::string& sPhaseName, bool bIsWarmup);
 	auto BenchEndPhase() -> bool;
@@ -672,6 +674,14 @@ protected:
 	}
 
   private:
+	enum class BenchPhaseState : uint8_t
+	{
+		Disabled,
+		Idle,
+		Warmup,
+		Recording
+	};
+
 	struct BenchCounters
 	{
 		uint64_t uDrawCalls{ 0 };
@@ -684,10 +694,7 @@ protected:
 		uint64_t uPotPaddedBytes{ 0 };
 	};
 
-	bool m_bBenchEnabled{ false };
-	bool m_bBenchPhaseActive{ false };
-	bool m_bBenchPhaseWarmup{ false };
-	bool m_bBenchRecording{ false };
+	BenchPhaseState m_BenchState{ BenchPhaseState::Disabled };
 	bool m_bBenchSuppressCounters{ false };
 	std::string m_sBenchOutputPath;
 	float m_fBenchFixedDt{ 0.0f };
