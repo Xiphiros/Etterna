@@ -144,13 +144,15 @@ if(WIN32)
     "InputHandler/InputHandler_DirectInputHelper.cpp"
     "InputHandler/InputHandler_Win32_MIDI.cpp"
     "InputHandler/InputHandler_Win32_Para.cpp"
-    "InputHandler/InputHandler_Win32_Pump.cpp")
+    "InputHandler/InputHandler_Win32_Pump.cpp"
+    "InputHandler/InputHandler_Win32_RawInput.cpp")
   list(APPEND SMDATA_ARCH_INPUT_HPP
     "InputHandler/InputHandler_DirectInput.h"
     "InputHandler/InputHandler_DirectInputHelper.h"
     "InputHandler/InputHandler_Win32_MIDI.h"
     "InputHandler/InputHandler_Win32_Para.h"
-    "InputHandler/InputHandler_Win32_Pump.h")
+    "InputHandler/InputHandler_Win32_Pump.h"
+    "InputHandler/InputHandler_Win32_RawInput.h")
   if (NOT MSVC)
     list(APPEND SMDATA_ARCH_INPUT_SRC "InputHandler/InputHandler_SextetStream.cpp")
     list(APPEND SMDATA_ARCH_INPUT_HPP "InputHandler/InputHandler_SextetStream.h")
