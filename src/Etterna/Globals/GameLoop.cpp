@@ -308,16 +308,29 @@ namespace GameLoop {
 		return g_fUpdateRate;
     }
 
-    void ChangeTheme(const std::string& sNewTheme) {
-        g_NewTheme = sNewTheme;
-    }
+	void
+	SetConstantUpdateDeltaSeconds(float fDeltaSeconds)
+	{
+		g_fConstantUpdateDeltaSeconds.Set(fDeltaSeconds);
+		g_fConstantUpdateDeltaSeconds.SetStatic(true);
+	}
 
-    void ChangeGame(const std::string& new_game, const std::string& new_theme) {
-        g_NewGame = new_game;
-        g_NewTheme = new_theme;
-    }
+	void
+	ChangeTheme(const std::string& sNewTheme)
+	{
+		g_NewTheme = sNewTheme;
+	}
 
-    void RunGameLoop() {
+	void
+	ChangeGame(const std::string& new_game, const std::string& new_theme)
+	{
+		g_NewGame = new_game;
+		g_NewTheme = new_theme;
+	}
+
+	void
+	RunGameLoop()
+	{
 		Core::Platform::boostPriority();
 
 		// set to the english layout if applicable
@@ -347,43 +360,59 @@ namespace GameLoop {
 
             CheckFocus();
 
-            // Update SOUNDMAN early (before any RageSound::GetPosition calls), to
-            // flush position data.
-            SOUNDMAN->Update();
+			const bool bBenchEnabled =
+			  DISPLAY != nullptr && DISPLAY->IsBenchEnabled();
+			std::chrono::steady_clock::time_point updateStart{};
+			if (bBenchEnabled) {
+				updateStart = std::chrono::steady_clock::now();
+			}
 
-            /* Update song beat information -before- calling update on all the
-             * classes that depend on it. If you don't do this first, the classes
-             * are all acting on old information and will lag. (but no longer
-             * fatally, due to timestamping -glenn) */
-            SOUND->Update(fDeltaTime);
-            TEXTUREMAN->Update(fDeltaTime);
-            GAMESTATE->Update(fDeltaTime);
-            SCREENMAN->Update(fDeltaTime);
-            NSMAN->Update(fDeltaTime);
-            DLMAN->Update(fDeltaTime);
+			// Update SOUNDMAN early (before any RageSound::GetPosition calls),
+			// to flush position data.
+			SOUNDMAN->Update();
 
-            /* Important: Process input AFTER updating game logic, or input will be
-             * acting on song beat from last frame */
-            StepMania::HandleInputEvents(fDeltaTime);
+			/* Update song beat information -before- calling update on all the
+			 * classes that depend on it. If you don't do this first, the
+			 * classes are all acting on old information and will lag. (but no
+			 * longer fatally, due to timestamping -glenn) */
+			SOUND->Update(fDeltaTime);
+			TEXTUREMAN->Update(fDeltaTime);
+			GAMESTATE->Update(fDeltaTime);
+			SCREENMAN->Update(fDeltaTime);
+			NSMAN->Update(fDeltaTime);
+			DLMAN->Update(fDeltaTime);
 
-            static float deviceCheckWait = 0.f;
-            deviceCheckWait += fDeltaTime;
+			/* Important: Process input AFTER updating game logic, or input will
+			 * be acting on song beat from last frame */
+			StepMania::HandleInputEvents(fDeltaTime);
 
-            if (deviceCheckWait >= 1.0f) {
-                deviceCheckWait = 0.f;
+			static float deviceCheckWait = 0.f;
+			deviceCheckWait += fDeltaTime;
 
-                if (INPUTMAN->DevicesChanged()) {
-                    INPUTFILTER->Reset(); // fix "buttons stuck" if button held
-                                          // while unplugged
-                    INPUTMAN->LoadDrivers();
-                    std::string sMessage;
-                    if (INPUTMAPPER->CheckForChangedInputDevicesAndRemap(sMessage))
-                        SCREENMAN->SystemMessage(sMessage);
-                }
-            }
+			if (deviceCheckWait >= 1.0f) {
+				deviceCheckWait = 0.f;
 
-            // Render
-            SCREENMAN->Draw();
+				if (INPUTMAN->DevicesChanged()) {
+					INPUTFILTER->Reset(); // fix "buttons stuck" if button held
+										  // while unplugged
+					INPUTMAN->LoadDrivers();
+					std::string sMessage;
+					if (INPUTMAPPER->CheckForChangedInputDevicesAndRemap(
+						  sMessage))
+						SCREENMAN->SystemMessage(sMessage);
+				}
+			}
+
+			if (bBenchEnabled) {
+				const auto updateEnd = std::chrono::steady_clock::now();
+				DISPLAY->BenchSetLastUpdateUs(
+				  std::chrono::duration<double, std::micro>(updateEnd -
+															updateStart)
+					.count());
+			}
+
+			// Render
+			SCREENMAN->Draw();
 
 			// Don't burn CPU while unfocused
 			if (!GameLoop::isGameFocused() &&
@@ -393,8 +422,7 @@ namespace GameLoop {
         }
 
     	Core::Platform::unboostPriority();
-    }
-
+	}
 }
 
 
