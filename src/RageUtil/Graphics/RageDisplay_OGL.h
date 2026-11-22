@@ -13,10 +13,16 @@
  * Flush it. */
 #define FlushGLErrors()                                                        \
 	do {                                                                       \
+		if (unlikely(DISPLAY != nullptr && DISPLAY->IsBenchRecording())) {     \
+			DISPLAY->BenchIncGLGetQueries();                                   \
+		}                                                                      \
 	} while (glGetError() != GL_NO_ERROR)
 #define AssertNoGLError()                                                      \
                                                                                \
 	{                                                                          \
+		if (unlikely(DISPLAY != nullptr && DISPLAY->IsBenchRecording())) {     \
+			DISPLAY->BenchIncGLGetQueries();                                   \
+		}                                                                      \
 		GLenum error = glGetError();                                           \
 		ASSERT_M(error == GL_NO_ERROR,                                         \
 				 RageDisplay_Legacy_Helpers::GLToString(error));               \
@@ -121,8 +127,12 @@ class RageDisplay_Legacy : public RageDisplay
 	void SetLineWidth(float fWidth) override;
 
 	std::string GetTextureDiagnostics(unsigned id) const override;
+	void OnContextInvalidated();
 
   protected:
+	void OnBenchBeginPhase(bool bIsWarmup) override;
+	void OnBenchEndPhase() override;
+
 	void DrawQuadsInternal(const RageSpriteVertex v[], int iNumVerts) override;
 	void DrawQuadStripInternal(const RageSpriteVertex v[],
 							   int iNumVerts) override;
@@ -151,6 +161,22 @@ class RageDisplay_Legacy : public RageDisplay
 	void SendCurrentMatrices();
 
   private:
+	void HarvestAvailableGpuQueries();
+	void DrainAllGpuQueries();
+	auto CaptureBenchScreenshot(const std::string& sVfsPngPath) -> bool;
+
+	static constexpr size_t kGpuTimerRingSize = 8;
+	unsigned int m_aGpuTimerQueries[kGpuTimerRingSize]{};
+	bool m_bGpuTimerQueriesInitialized{ false };
+	size_t m_uGpuRingHead{ 0 };
+	size_t m_uGpuRingTail{ 0 };
+	size_t m_uGpuRingCount{ 0 };
+	bool m_bGpuQueryActive{ false };
+	bool m_bBenchFrameActive{ false };
+	bool m_bHasPrevFrameEnd{ false };
+	std::chrono::steady_clock::time_point m_BenchDrawStart{};
+	std::chrono::steady_clock::time_point m_BenchPrevFrameEnd{};
+
 	RageTextureRenderTarget* offscreenRenderTarget = nullptr;
 };
 
