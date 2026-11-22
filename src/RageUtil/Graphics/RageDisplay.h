@@ -367,6 +367,10 @@ class RageDisplay
 	{
 		return false;
 	}
+	[[nodiscard]] virtual auto SupportsNonPowerOfTwoTextures() const -> bool
+	{
+		return false;
+	}
 
 	/* Create a render target, returning a texture handle. In addition to normal
 	 * texture functions, this can be passed to SetRenderTarget. Delete with
@@ -662,6 +666,15 @@ protected:
 	[[nodiscard]] auto GetViewTop() const -> const RageMatrix*;
 	[[nodiscard]] auto GetWorldTop() const -> const RageMatrix*;
 	[[nodiscard]] auto GetTextureTop() const -> const RageMatrix*;
+	[[nodiscard]] auto GetCenteringRev() const -> uint64_t;
+	[[nodiscard]] auto IsCenteringIdentity() const -> bool;
+	[[nodiscard]] auto GetProjectionRev() const -> uint64_t;
+	[[nodiscard]] auto GetViewRev() const -> uint64_t;
+	[[nodiscard]] auto IsViewIdentity() const -> bool;
+	[[nodiscard]] auto GetWorldRev() const -> uint64_t;
+	[[nodiscard]] auto IsWorldIdentity() const -> bool;
+	[[nodiscard]] auto GetTextureRev() const -> uint64_t;
+	[[nodiscard]] auto IsTextureIdentity() const -> bool;
 
 	void FrameLimitBeforeVsync();
 	void FrameLimitAfterVsync(int iFPS);
