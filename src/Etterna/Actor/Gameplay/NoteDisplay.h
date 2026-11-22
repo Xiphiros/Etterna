@@ -438,6 +438,8 @@ struct NoteColumnRenderer : public Actor
 	std::vector<NCR_TweenState> NCR_Tweens;
 	NCR_TweenState NCR_current;
 	NCR_TweenState NCR_start;
+	std::vector<NoteData::TrackMap::const_iterator> m_vHolds;
+	std::vector<NoteData::TrackMap::const_iterator> m_vTaps;
 };
 
 #endif
