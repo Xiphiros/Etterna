@@ -339,28 +339,32 @@ namespace GameLoop {
 		// this saves the system layout for the first time
 		setEnglishLayout();
 
-        while (!GameLoop::hasUserQuit()) {
-            if (!g_NewGame.empty()) {
-                DoChangeGame();
-            }
-            if (!g_NewTheme.empty()) {
-                DoChangeTheme();
-            }
+		while (!GameLoop::hasUserQuit()) {
+			if (DISPLAY != nullptr) {
+				DISPLAY->WaitForGpuFrameSlot();
+			}
+			if (!g_NewGame.empty()) {
+				DoChangeGame();
+			}
+			if (!g_NewTheme.empty()) {
+				DoChangeTheme();
+			}
 
-            // Update
-            auto now = std::chrono::steady_clock::now();
-            std::chrono::duration<float> frameStart = now - g_AccurateGameplayTimer;
-            float fDeltaTime = frameStart.count();
-            g_AccurateGameplayTimer = now;
+			// Update
+			auto now = std::chrono::steady_clock::now();
+			std::chrono::duration<float> frameStart =
+			  now - g_AccurateGameplayTimer;
+			float fDeltaTime = frameStart.count();
+			g_AccurateGameplayTimer = now;
 
-            if (g_fConstantUpdateDeltaSeconds > 0)
-                fDeltaTime = g_fConstantUpdateDeltaSeconds;
+			if (g_fConstantUpdateDeltaSeconds > 0)
+				fDeltaTime = g_fConstantUpdateDeltaSeconds;
 
-            CheckGameLoopTimerSkips(fDeltaTime);
+			CheckGameLoopTimerSkips(fDeltaTime);
 
-            fDeltaTime *= g_fUpdateRate;
+			fDeltaTime *= g_fUpdateRate;
 
-            CheckFocus();
+			CheckFocus();
 
 			const bool bBenchEnabled =
 			  DISPLAY != nullptr && DISPLAY->IsBenchEnabled();
@@ -380,13 +384,20 @@ namespace GameLoop {
 			SOUND->Update(fDeltaTime);
 			TEXTUREMAN->Update(fDeltaTime);
 			GAMESTATE->Update(fDeltaTime);
-			SCREENMAN->Update(fDeltaTime);
+			// Sample song position and dispatch input before Screen::Update so
+			// judgments and UI state appear in the same frame; fall back to
+			// post-update input during pending screen transitions or initial
+			// screen updates.
+			if (SCREENMAN->CanProcessInputBeforeUpdate()) {
+				SCREENMAN->UpdateBeforeInput();
+				StepMania::HandleInputEvents(fDeltaTime);
+				SCREENMAN->Update(fDeltaTime);
+			} else {
+				SCREENMAN->Update(fDeltaTime);
+				StepMania::HandleInputEvents(fDeltaTime);
+			}
 			NSMAN->Update(fDeltaTime);
 			DLMAN->Update(fDeltaTime);
-
-			/* Important: Process input AFTER updating game logic, or input will
-			 * be acting on song beat from last frame */
-			StepMania::HandleInputEvents(fDeltaTime);
 
 			static float deviceCheckWait = 0.f;
 			deviceCheckWait += fDeltaTime;
@@ -421,9 +432,9 @@ namespace GameLoop {
 				PREFSMAN->m_UnfocusedSleepMillisecs > 0)
 				std::this_thread::sleep_for(std::chrono::milliseconds(
 				  PREFSMAN->m_UnfocusedSleepMillisecs));
-        }
+		}
 
-    	Core::Platform::unboostPriority();
+		Core::Platform::unboostPriority();
 	}
 }
 
