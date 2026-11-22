@@ -5,17 +5,17 @@
 #include "Etterna/Models/Misc/LocalizedString.h"
 #include "Etterna/Singletons/PrefsManager.h"
 #include "RageUtil/File/RageFile.h"
-#include "RageUtil/File/RageFileManager.h"
 #include "Core/Services/Locator.hpp"
 #include "RageUtil/Misc/RageMath.h"
 #include "RageSurface.h"
 #include "RageSurfaceUtils.h"
-#include "RageSurface_Save_PNG.h"
 #include "RageTextureManager.h"
 #include "RageUtil/Misc/RageTypes.h"
 #include "RageUtil/Utils/RageUtil.h"
 
 #include "arch/LowLevelWindow/LowLevelWindow.h"
+
+#include <stb/stb_image_write.h>
 
 #include <algorithm>
 #include <chrono>
@@ -87,6 +87,11 @@ ReadGpuQueryUs(GLuint uQuery) -> double
 	if (GLEW_ARB_timer_query && glGetQueryObjectui64v != nullptr) {
 		GLuint64 uElapsedNs = 0;
 		glGetQueryObjectui64v(uQuery, GL_QUERY_RESULT, &uElapsedNs);
+		return static_cast<double>(uElapsedNs) * 1e-3;
+	}
+	if (GLEW_EXT_timer_query && glGetQueryObjectui64vEXT != nullptr) {
+		GLuint64EXT uElapsedNs = 0;
+		glGetQueryObjectui64vEXT(uQuery, GL_QUERY_RESULT, &uElapsedNs);
 		return static_cast<double>(uElapsedNs) * 1e-3;
 	}
 	GLuint uElapsedNs = 0;
@@ -939,7 +944,11 @@ RageDisplay_Legacy::GetMaxTextureSize() const
 void
 RageDisplay_Legacy::OnContextInvalidated()
 {
-	// Context recreation destroys GL objects owned by the previous context.
+	// Context recreation destroys GL objects owned by the previous context;
+	// pad unharvested slots so gpu_us remains index-aligned with frame_us.
+	for (size_t i = 0; i < m_uGpuRingCount; ++i) {
+		BenchRecordGpuUs(0.0);
+	}
 	std::fill(std::begin(m_aGpuTimerQueries), std::end(m_aGpuTimerQueries), 0U);
 	m_bGpuTimerQueriesInitialized = false;
 	m_uGpuRingHead = 0;
@@ -1010,6 +1019,10 @@ RageDisplay_Legacy::OnBenchEndPhase()
 bool
 RageDisplay_Legacy::BeginFrame()
 {
+	if (unlikely(m_bGpuQueryActive && glEndQuery != nullptr)) {
+		glEndQuery(GL_TIME_ELAPSED);
+		m_bGpuQueryActive = false;
+	}
 	const bool bRecording = IsBenchRecording();
 	m_bBenchFrameActive = bRecording;
 	if (unlikely(bRecording)) {
@@ -1044,11 +1057,19 @@ RageDisplay_Legacy::BeginFrame()
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
 	const auto beginFrame = RageDisplay::BeginFrame();
-	if (beginFrame && UseOffscreenRenderTarget()) {
+	if (!beginFrame) {
+		if (unlikely(m_bGpuQueryActive && glEndQuery != nullptr)) {
+			glEndQuery(GL_TIME_ELAPSED);
+			m_bGpuQueryActive = false;
+		}
+		m_bBenchFrameActive = false;
+		return false;
+	}
+	if (UseOffscreenRenderTarget()) {
 		offscreenRenderTarget->BeginRenderingTo(false);
 	}
 
-	return beginFrame;
+	return true;
 }
 
 void
@@ -1240,23 +1261,54 @@ RageDisplay_Legacy::CaptureBenchScreenshot(const std::string& sVfsPngPath)
 		SAFE_DELETE(pSurface);
 		return false;
 	}
-	// RageSurfaceUtils::SavePNG closes its RageFile argument and passes
-	// GetRealPath() (m_Path) directly to stbi_write_png. Materialize the VFS
-	// entry first so ResolvePath yields the mounted host path even when the
-	// caller passes a leading '/' or runs outside the root directory.
-	out.Close();
-	const std::string sResolvedPath =
-	  FILEMAN != nullptr ? FILEMAN->ResolvePath(sVfsPngPath) : std::string();
-	RageFile pngTarget;
-	RageFile* pSaveFile = &out;
-	if (!sResolvedPath.empty() && sResolvedPath != sVfsPngPath) {
-		pngTarget.Open(sResolvedPath, RageFile::WRITE);
-		pSaveFile = &pngTarget;
+
+	RageSurface* pPngSurface = nullptr;
+	const bool bConverted =
+	  RageSurfaceUtils::ConvertSurface(pSurface,
+									   pPngSurface,
+									   pSurface->w,
+									   pSurface->h,
+									   32,
+									   Swap32BE(0xFF000000),
+									   Swap32BE(0x00FF0000),
+									   Swap32BE(0x0000FF00),
+									   Swap32BE(0x0000FF00));
+	if (!bConverted) {
+		pPngSurface = pSurface;
 	}
-	std::string sError;
-	const bool bSaved = RageSurfaceUtils::SavePNG(pSurface, *pSaveFile, sError);
+
+	struct PngWriteCtx
+	{
+		RageFile* pFile;
+		bool bOk{ true };
+	} ctx{ &out };
+	const bool bEncoded =
+	  stbi_write_png_to_func(
+		[](void* pContext, void* pData, int iSize) {
+			auto* pWriteCtx = static_cast<PngWriteCtx*>(pContext);
+			if (iSize <= 0 || !pWriteCtx->bOk) {
+				return;
+			}
+			if (pWriteCtx->pFile->Write(pData, static_cast<size_t>(iSize)) ==
+				-1) {
+				pWriteCtx->bOk = false;
+			}
+		},
+		&ctx,
+		pPngSurface->w,
+		pPngSurface->h,
+		4,
+		pPngSurface->pixels,
+		pPngSurface->pitch) != 0;
+	if (bConverted) {
+		SAFE_DELETE(pPngSurface);
+	}
 	SAFE_DELETE(pSurface);
-	if (!bSaved) {
+
+	const bool bFlushed = out.Flush() != -1;
+	const std::string sError = out.GetError();
+	out.Close();
+	if (!bEncoded || !ctx.bOk || !bFlushed) {
 		Locator::getLogger()->warn(
 		  "Couldn't save PNG {}: {}", sVfsPngPath, sError);
 		return false;
