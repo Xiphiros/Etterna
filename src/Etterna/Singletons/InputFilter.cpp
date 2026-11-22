@@ -138,9 +138,9 @@ InputFilter::InputFilter()
 	Reset();
 	ResetRepeatRate();
 
-	m_MouseCoords.fX = 0;
-	m_MouseCoords.fY = 0;
-	m_MouseCoords.fZ = 0;
+	m_fCursorX.store(0.0f, std::memory_order_relaxed);
+	m_fCursorY.store(0.0f, std::memory_order_relaxed);
+	m_fMouseWheel.store(0.0f, std::memory_order_relaxed);
 
 	// Register with Lua.
 	{
@@ -236,7 +236,8 @@ InputFilter::ButtonPressed(const DeviceInput& di)
 
 	if (di.button == KEY_CAPSLOCK && di.bDown) {
 		// This might not be the right place to do this
-		capsLockEnabled = !capsLockEnabled;
+		capsLockEnabled.store(!capsLockEnabled.load(std::memory_order_relaxed),
+							  std::memory_order_relaxed);
 	}
 }
 
@@ -516,15 +517,14 @@ InputFilter::GetPressedButtons(std::vector<DeviceInput>& array) const
 void
 InputFilter::UpdateCursorLocation(float _fX, float _fY)
 {
-	m_MouseCoords.fX = _fX;
-
-	m_MouseCoords.fY = _fY;
+	m_fCursorX.store(_fX, std::memory_order_relaxed);
+	m_fCursorY.store(_fY, std::memory_order_relaxed);
 }
 
 void
 InputFilter::UpdateMouseWheel(float _fZ)
 {
-	m_MouseCoords.fZ = _fZ;
+	m_fMouseWheel.store(_fZ, std::memory_order_relaxed);
 }
 
 bool
