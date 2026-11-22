@@ -20,10 +20,16 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <ctime>
 #include <fstream>
 #include <numeric>
 #include <optional>
 #include <thread>
+
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) ||             \
+  defined(_M_IX86)
+#include <immintrin.h>
+#endif
 
 #include "rapidjson/stringbuffer.h"
 #include "rapidjson/writer.h"
@@ -36,6 +42,10 @@ uint32_t s_uBenchSeed = 0;
 } // namespace
 
 #ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
 #include "archutils/Win32/GraphicsWindow.h"
 #endif
 
@@ -65,8 +75,9 @@ static int g_iFramesRenderedSinceLastCheck, g_iFramesRenderedSinceLastReset,
 static auto g_LastFrameEndedAt = std::chrono::steady_clock::now();
 static std::chrono::nanoseconds g_LastFrameDuration =
   std::chrono::duration<int64_t>();
-static std::chrono::nanoseconds g_FrameCorrection =
-  std::chrono::duration<int64_t>(0);
+static std::chrono::steady_clock::time_point g_NextFrameDeadline{};
+static bool g_bHasFrameDeadline = false;
+static double g_fOvershootEwmaNs = 200000.0;
 static auto g_FrameRenderTime = std::chrono::steady_clock::now();
 static std::chrono::nanoseconds g_LastFrameRenderTime;
 static std::chrono::nanoseconds g_LastFramePresentTime;
@@ -1322,48 +1333,103 @@ targetFrameTime() -> double
 	return result;
 }
 
+namespace {
+inline void
+CpuSpinPause()
+{
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) ||             \
+  defined(_M_IX86)
+	_mm_pause();
+#else
+	std::this_thread::yield();
+#endif
+}
+
+void
+OsSleepDuration(std::chrono::nanoseconds ns)
+{
+	if (ns.count() <= 0) {
+		return;
+	}
+#ifdef _WIN32
+	using PFN_CreateWaitableTimerExW =
+	  HANDLE(WINAPI*)(LPSECURITY_ATTRIBUTES, LPCWSTR, DWORD, DWORD);
+	struct HighResTimerHolder
+	{
+		HANDLE hTimer{ nullptr };
+		HighResTimerHolder()
+		{
+			HMODULE hKernel = GetModuleHandleW(L"kernel32.dll");
+			if (hKernel != nullptr) {
+				auto pCreate = reinterpret_cast<PFN_CreateWaitableTimerExW>(
+				  GetProcAddress(hKernel, "CreateWaitableTimerExW"));
+				if (pCreate != nullptr) {
+					hTimer =
+					  pCreate(nullptr, nullptr, 0x00000002, TIMER_ALL_ACCESS);
+				}
+			}
+		}
+		~HighResTimerHolder()
+		{
+			if (hTimer != nullptr) {
+				CloseHandle(hTimer);
+			}
+		}
+	};
+	thread_local HighResTimerHolder s_Timer;
+	if (s_Timer.hTimer != nullptr) {
+		LARGE_INTEGER due{};
+		due.QuadPart = -std::max<LONGLONG>(1, ns.count() / 100);
+		if (SetWaitableTimer(
+			  s_Timer.hTimer, &due, 0, nullptr, nullptr, FALSE)) {
+			WaitForSingleObject(s_Timer.hTimer, INFINITE);
+			return;
+		}
+	}
+	std::this_thread::sleep_for(ns);
+#elif defined(__linux__) || defined(__unix__)
+	struct timespec req{};
+	req.tv_sec = static_cast<time_t>(ns.count() / 1000000000LL);
+	req.tv_nsec = static_cast<long>(ns.count() % 1000000000LL);
+	clock_nanosleep(CLOCK_MONOTONIC, 0, &req, nullptr);
+#else
+	std::this_thread::sleep_for(ns);
+#endif
+}
+
+void
+HybridPreciseSleep(std::chrono::steady_clock::time_point deadline,
+				   double& ewmaOvershootNs)
+{
+	auto now = std::chrono::steady_clock::now();
+	if (now >= deadline) {
+		return;
+	}
+	const auto spinMargin = std::chrono::nanoseconds(
+	  static_cast<int64_t>(std::clamp(ewmaOvershootNs, 150000.0, 2000000.0)));
+	if (now + spinMargin < deadline) {
+		const auto sleepTarget = deadline - spinMargin;
+		OsSleepDuration(std::chrono::duration_cast<std::chrono::nanoseconds>(
+		  sleepTarget - now));
+		const auto afterSleep = std::chrono::steady_clock::now();
+		const double overshootNs = std::max(
+		  0.0,
+		  std::chrono::duration<double, std::nano>(afterSleep - sleepTarget)
+			.count());
+		ewmaOvershootNs = std::clamp(
+		  0.875 * ewmaOvershootNs + 0.125 * overshootNs, 150000.0, 2000000.0);
+	}
+	while (std::chrono::steady_clock::now() < deadline) {
+		CpuSpinPause();
+	}
+}
+} // namespace
+
 void
 RageDisplay::FrameLimitBeforeVsync()
 {
-	auto waitTime = targetFrameTime();
-	if (g_fPredictiveFrameLimit.Get()) {
-		const auto afterRender = std::chrono::steady_clock::now();
-		const auto endTime = afterRender - g_FrameRenderTime;
-
-		g_LastFrameRenderTime = endTime;
-	} else if (!PREFSMAN->m_bVsync.Get() && waitTime > 0.0) {
-		auto waitNanoseconds =
-		  std::chrono::duration_cast<std::chrono::nanoseconds>(
-			std::chrono::duration<double>(waitTime));
-
-		// Estimate how long to wait to meet our frame time.
-		// Rationale: the following
-		//
-		//  auto t = g_LastFrameEndedAt + waitTime;
-		//  while (t > now());
-		//
-		// is too tight and waits slightly too long (trivially, by at least
-		// the amount of time required to exit the busy loop). In practice this
-		// effect noticeably reduces measured FPS. To account for it, measure
-		// the frame times we are actually getting and gradually adjust the
-		// delay to bring it in line with the target frame time.
-		auto error = g_LastFrameDuration - waitNanoseconds;
-		if (error < std::chrono::milliseconds(1)) {
-			g_FrameCorrection -= error / 64;
-			CLAMP(g_FrameCorrection,
-				std::chrono::milliseconds(-1),
-				std::chrono::milliseconds(0));
-		}
-
-		auto estimatedTimeToWait = waitNanoseconds + g_FrameCorrection;
-		auto t = g_LastFrameEndedAt + estimatedTimeToWait;
-		while (t > std::chrono::steady_clock::now()) {
-			std::this_thread::yield();
-		}
-	} else {
-		// Ignore frame limit preferences if v-sync is enabled without
-		// predictive frame limit.
-	}
+	g_LastFrameRenderTime =
+	  std::chrono::steady_clock::now() - g_FrameRenderTime;
 }
 
 // Frame pacing code
@@ -1382,53 +1448,61 @@ RageDisplay::FrameLimitAfterVsync(int iFPS)
 	g_LastFrameDuration = frameEndedAt - g_LastFrameEndedAt;
 	g_LastFrameEndedAt = frameEndedAt;
 
-	if (!g_fPredictiveFrameLimit.Get()) {
+	if (IsBenchEnabled()) {
+		g_bHasFrameDeadline = false;
+		g_FrameRenderTime = frameEndedAt;
 		return;
 	}
 
 	auto waitTime = targetFrameTime();
 
-	if (!PREFSMAN->m_bVsync.Get() && waitTime == 0.0) {
+	if (g_fPredictiveFrameLimit.Get()) {
+		g_bHasFrameDeadline = false;
+		if (!PREFSMAN->m_bVsync.Get() && waitTime == 0.0) {
+			g_FrameRenderTime = frameEndedAt;
+			return;
+		}
+		if (PREFSMAN->m_bVsync.Get() &&
+			(waitTime == 0.0 || (iFPS > 0 && waitTime < (1.0 / iFPS)))) {
+			waitTime = 1.0 / iFPS;
+		}
+		const auto waitCautiousness =
+		  g_fFrameLimitPercent.Get() > 0 ? g_fFrameLimitPercent.Get() : 0.90;
+		waitTime *= waitCautiousness;
+		const auto waitTimeActuallyNano =
+		  std::chrono::duration_cast<std::chrono::nanoseconds>(
+			std::chrono::duration<double>(waitTime));
+		const auto renderTime = g_LastFrameRenderTime + g_LastFramePresentTime;
+		const auto startLoopTime = waitTimeActuallyNano - renderTime;
+		if (startLoopTime.count() > 0) {
+			HybridPreciseSleep(std::chrono::steady_clock::now() + startLoopTime,
+							   g_fOvershootEwmaNs);
+		}
+		g_FrameRenderTime = std::chrono::steady_clock::now();
 		return;
 	}
 
-	// Not using frame limiter and vsync is enabled
-	// Or Frame limiter is set beyond vsync
-	if (PREFSMAN->m_bVsync.Get() &&
-		(waitTime == 0.0 || waitTime < (1.0 / iFPS)))
-		waitTime = 1.0 / iFPS;
-
-	// Calculate wait time and attempt to not overshoot waiting
-	// Cautiousness is needed due to CPU power states and driver present times
-	// causing entire loop time variations of around +-250 microseconds.
-
-	// Conservative default of 10% target frame time is used incase someone is
-	// using really old hardware
-	const auto waitCautiousness =
-	  g_fFrameLimitPercent.Get() > 0 ? g_fFrameLimitPercent.Get() : 0.90;
-
-	// Target frame time
-	waitTime *= waitCautiousness;
-	const auto waitTimeNano = std::chrono::duration<double>(waitTime);
-	const auto waitTimeActuallyNano =
-	  std::chrono::duration_cast<std::chrono::nanoseconds>(waitTimeNano);
-
-	// Last render time, DirectX and OpenGL do work in present time so we need
-	// to include them
-	const auto renderTime = g_LastFrameRenderTime + g_LastFramePresentTime;
-
-	// ex. 8.33ms refresh rate - 1ms render time
-	const auto startLoopTime = waitTimeActuallyNano - renderTime;
-
-	// Check if we need to wait
-	if (startLoopTime.count() < 0) {
-		// Just go, we're late
-		// LOG->Trace("Game loop start is late by %d", startLoopTime);
+	if (!PREFSMAN->m_bVsync.Get() && waitTime > 0.0) {
+		const auto waitNanoseconds =
+		  std::chrono::duration_cast<std::chrono::nanoseconds>(
+			std::chrono::duration<double>(waitTime));
+		if (waitNanoseconds.count() > 0) {
+			if (!g_bHasFrameDeadline) {
+				g_NextFrameDeadline = frameEndedAt + waitNanoseconds;
+				g_bHasFrameDeadline = true;
+			} else {
+				g_NextFrameDeadline += waitNanoseconds;
+				if (g_NextFrameDeadline < frameEndedAt) {
+					g_NextFrameDeadline = frameEndedAt;
+				} else if (g_NextFrameDeadline >
+						   frameEndedAt + waitNanoseconds) {
+					g_NextFrameDeadline = frameEndedAt + waitNanoseconds;
+				}
+			}
+			HybridPreciseSleep(g_NextFrameDeadline, g_fOvershootEwmaNs);
+		}
 	} else {
-		// LOG->Trace("Waiting before game loop by %d", startLoopTime);
-		// Wait until our desired time, aka g_fFrameLimitPercent of the way
-		// until needed present time
-		std::this_thread::sleep_for(startLoopTime);
+		g_bHasFrameDeadline = false;
 	}
 
 	g_FrameRenderTime = std::chrono::steady_clock::now();
