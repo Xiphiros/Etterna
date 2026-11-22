@@ -82,6 +82,7 @@ class RageDisplay_D3D : public RageDisplay
 	{
 		return true;
 	}
+	[[nodiscard]] auto SupportsNonPowerOfTwoTextures() const -> bool override;
 
 	auto CreateCompiledGeometry() -> RageCompiledGeometry* override;
 	void DeleteCompiledGeometry(RageCompiledGeometry* p) override;
@@ -105,8 +106,89 @@ class RageDisplay_D3D : public RageDisplay
 	auto GetOrthoMatrix(float l, float r, float b, float t, float zn, float zf)
 	  -> RageMatrix override;
 
-	static void RecoverFromDeviceLoss();
+	void RecoverFromDeviceLoss();
 	void SendCurrentMatrices();
+
+  private:
+	void InvalidateStateCache(bool bFlushBatch = false,
+							  bool bResetDeviceDefaults = false);
+	void FlushQuadBatch();
+	void ComputeD3DProjectionMatrix(RageMatrix& out);
+	void SetRenderStateCached(uint32_t state,
+							  uint32_t value,
+							  uint32_t& cached,
+							  bool& valid);
+	void SetSamplerStateCached(TextureUnit tu,
+							   uint32_t type,
+							   uint32_t value,
+							   uint32_t& cached,
+							   bool& valid);
+
+	uint32_t m_dwCachedAlphaBlend{ 0 };
+	bool m_bAlphaBlendValid{ false };
+	uint32_t m_dwCachedBlendOp{ 0 };
+	bool m_bBlendOpValid{ false };
+	uint32_t m_dwCachedSrcBlend{ 0 };
+	bool m_bSrcBlendValid{ false };
+	uint32_t m_dwCachedDestBlend{ 0 };
+	bool m_bDestBlendValid{ false };
+	uint32_t m_dwCachedSrcBlendAlpha{ 0 };
+	bool m_bSrcBlendAlphaValid{ false };
+	uint32_t m_dwCachedDestBlendAlpha{ 0 };
+	bool m_bDestBlendAlphaValid{ false };
+	uint32_t m_dwCachedZWrite{ 1 };
+	bool m_bZWriteValid{ false };
+	uint32_t m_dwCachedZEnable{ 1 };
+	bool m_bZEnableValid{ false };
+	uint32_t m_dwCachedZFunc{ 4 };
+	bool m_bZFuncValid{ false };
+	float m_fCachedZBias{ 0.0F };
+	bool m_bZBiasValid{ false };
+	uint32_t m_dwCachedAlphaTest{ 0 };
+	bool m_bAlphaTestValid{ false };
+	bool m_bAlphaRefFuncValid{ false };
+	uint32_t m_dwCachedCullMode{ 0 };
+	bool m_bCullModeValid{ false };
+	uint32_t m_dwCachedLighting{ 1 };
+	bool m_bLightingValid{ false };
+
+	intptr_t m_aBoundTex[NUM_TextureUnit]{};
+	bool m_abBoundTexValid[NUM_TextureUnit]{};
+	uint32_t m_adwMinFilter[NUM_TextureUnit]{};
+	bool m_abMinFilterValid[NUM_TextureUnit]{};
+	uint32_t m_adwMagFilter[NUM_TextureUnit]{};
+	bool m_abMagFilterValid[NUM_TextureUnit]{};
+	uint32_t m_adwAddressU[NUM_TextureUnit]{};
+	bool m_abAddressUValid[NUM_TextureUnit]{};
+	uint32_t m_adwAddressV[NUM_TextureUnit]{};
+	bool m_abAddressVValid[NUM_TextureUnit]{};
+	TextureMode m_aCachedTexMode[NUM_TextureUnit]{};
+	bool m_abTexModeValid[NUM_TextureUnit]{};
+
+	uint64_t m_uUploadedCenteringRev{ 0 };
+	uint64_t m_uUploadedProjRev{ 0 };
+	bool m_bUploadedInvertY{ false };
+	bool m_bProjUploadValid{ false };
+	uint64_t m_uUploadedViewRev{ 0 };
+	bool m_bViewUploadValid{ false };
+	uint64_t m_uUploadedWorldRev{ 0 };
+	bool m_bWorldIsIdentity{ false };
+	bool m_bWorldUploadValid{ false };
+	uint64_t m_auUploadedTexRev[NUM_TextureUnit]{};
+	bool m_abUploadedSphereMap[NUM_TextureUnit]{};
+	bool m_abTexMatrixIsIdentity[NUM_TextureUnit]{};
+	bool m_abTexMatrixValid[NUM_TextureUnit]{};
+
+	static constexpr size_t kMaxQuadBatchQuads = 2048;
+	static constexpr size_t kMaxQuadBatchVerts = kMaxQuadBatchQuads * 4;
+	std::vector<RageSpriteVertex> m_vQuadBatchVerts;
+	std::vector<uint16_t> m_vQuadBatchIndices;
+	RageMatrix m_QuadBatchProjection{};
+	RageMatrix m_QuadBatchView{};
+	uint64_t m_uQuadBatchCenteringRev{ 0 };
+	uint64_t m_uQuadBatchProjRev{ 0 };
+	uint64_t m_uQuadBatchViewRev{ 0 };
+	bool m_bQuadBatchInvertY{ false };
 };
 
 class RenderTarget
