@@ -308,6 +308,7 @@ class RageDisplay
 
 	virtual auto BeginFrame() -> bool;
 	virtual void EndFrame();
+	virtual void WaitForGpuFrameSlot() {}
 	[[nodiscard]] virtual auto GetActualVideoModeParams() const
 	  -> const ActualVideoModeParams* = 0;
 	auto IsWindowed() -> bool { return (*GetActualVideoModeParams()).windowed; }
