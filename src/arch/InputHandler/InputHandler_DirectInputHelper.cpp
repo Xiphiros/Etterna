@@ -15,10 +15,8 @@
 #endif
 #endif
 LPDIRECTINPUT8 g_dinput = nullptr;
+std::atomic<bool> g_bWin32RawInputActive{ false };
 
-
-static int
-ConvertScancodeToKey(int scancode);
 static BOOL CALLBACK
 DIJoystick_EnumDevObjectsProc(LPCDIDEVICEOBJECTINSTANCE dev, LPVOID data);
 static BOOL CALLBACK
@@ -75,10 +73,12 @@ DIDevice::Open(bool checkPreference)
 
 	hr = Device->SetCooperativeLevel(GraphicsWindow::GetHwnd(), coop);
 	if (hr != DI_OK) {
-		Locator::getLogger()->info("{}", hr_ssprintf(
-		  hr,
-		  "OpenDevice(%s): IDirectInputDevice2::SetCooperativeLevel",
-		  m_sName.c_str()));
+		Locator::getLogger()->info(
+		  "{}",
+		  hr_ssprintf(
+			hr,
+			"OpenDevice(%s): IDirectInputDevice2::SetCooperativeLevel",
+			m_sName.c_str()));
 		return false;
 	}
 
@@ -115,7 +115,7 @@ DIDevice::Open(bool checkPreference)
 				input_t in;
 				in.type = in.KEY;
 
-				in.num = ConvertScancodeToKey(b);
+				in.num = ConvertWin32ScancodeToKey(b);
 				in.ofs = b;
 				buttons++;
 				Inputs.push_back(in);
@@ -264,15 +264,16 @@ DIJoystick_EnumDevObjectsProc(LPCDIDEVICEOBJECTINSTANCE dev, LPVOID data)
 				++device->hats;
 				break;
 
-			case input_t::KEY: break;
+			case input_t::KEY:
+				break;
 		}
 	}
 
 	return DIENUM_CONTINUE;
 }
 
-static int
-ConvertScancodeToKey(int scancode)
+int
+ConvertWin32ScancodeToKey(int scancode)
 {
 	switch (scancode) {
 		case DIK_ESCAPE:
