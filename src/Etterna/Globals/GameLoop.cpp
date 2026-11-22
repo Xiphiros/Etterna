@@ -312,6 +312,8 @@ namespace GameLoop {
 	SetConstantUpdateDeltaSeconds(float fDeltaSeconds)
 	{
 		g_fConstantUpdateDeltaSeconds.Set(fDeltaSeconds);
+		// Mark static so SavePrefsToDisk() does not persist --bench-dt to
+		// Save/Preferences.ini.
 		g_fConstantUpdateDeltaSeconds.SetStatic(true);
 	}
 
