@@ -143,6 +143,11 @@ class RageDisplay_Legacy : public RageDisplay
 
 	std::string GetTextureDiagnostics(unsigned id) const override;
 	void OnContextInvalidated();
+	void OnShaderProgramReset()
+	{
+		m_bEffectModeValid = false;
+		m_iCelShadedStage = 0;
+	}
 	[[nodiscard]] auto IsLightingEnabled() const -> bool
 	{
 		return m_bCachedLighting;
@@ -240,11 +245,9 @@ class RageDisplay_Legacy : public RageDisplay
 	PolygonMode m_CachedPolygonMode{ POLYGON_FILL };
 	bool m_bPolygonModeValid{ false };
 
-	bool m_bClientVertexEnabled{ false };
-	bool m_bClientColorEnabled{ false };
-	bool m_bClientTex0Enabled{ false };
-	bool m_bClientTex1Enabled{ true };
-	bool m_bClientNormalEnabled{ true };
+	bool m_bClientStateValid{ false };
+	bool m_bClientTex1Enabled{ false };
+	bool m_bClientNormalEnabled{ false };
 	std::vector<uint8_t> m_vFallbackRGBA;
 
 	uint64_t m_uUploadedCenteringRev{ 0 };
