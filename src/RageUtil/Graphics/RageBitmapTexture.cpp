@@ -185,16 +185,21 @@ RageBitmapTexture::Create()
 	const uint64_t uSourceHeight =
 	  static_cast<uint64_t>(max(0, m_iImageHeight));
 
-	/* Texture dimensions need to be a power of two; jump to the next. */
-	m_iTextureWidth = power_of_two(m_iImageWidth);
-	m_iTextureHeight = power_of_two(m_iImageHeight);
+	if (DISPLAY->SupportsNonPowerOfTwoTextures()) {
+		m_iTextureWidth = max(1, m_iImageWidth);
+		m_iTextureHeight = max(1, m_iImageHeight);
+	} else {
+		/* Texture dimensions need to be a power of two; jump to the next. */
+		m_iTextureWidth = power_of_two(m_iImageWidth);
+		m_iTextureHeight = power_of_two(m_iImageHeight);
 
-	/* If we're under 8x8, increase it, to avoid filtering problems on odd
-	 * hardware. */
-	if (m_iTextureWidth < 8 || m_iTextureHeight < 8) {
-		actualID.bStretch = true;
-		m_iTextureWidth = max(8, m_iTextureWidth);
-		m_iTextureHeight = max(8, m_iTextureHeight);
+		/* If we're under 8x8, increase it, to avoid filtering problems on odd
+		 * hardware. */
+		if (m_iTextureWidth < 8 || m_iTextureHeight < 8) {
+			actualID.bStretch = true;
+			m_iTextureWidth = max(8, m_iTextureWidth);
+			m_iTextureHeight = max(8, m_iTextureHeight);
+		}
 	}
 
 	ASSERT_M(m_iTextureWidth <= actualID.iMaxSize,
