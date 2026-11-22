@@ -404,16 +404,36 @@ RageDisplay::IsD3DInternal()
 }
 
 // Matrix stuff
+static uint64_t g_uNextMatrixRev = 1;
+
+static auto
+IsMatrixIdentity(const RageMatrix& m) -> bool
+{
+	return m.m[0][0] == 1.0f && m.m[0][1] == 0.0f && m.m[0][2] == 0.0f &&
+		   m.m[0][3] == 0.0f && m.m[1][0] == 0.0f && m.m[1][1] == 1.0f &&
+		   m.m[1][2] == 0.0f && m.m[1][3] == 0.0f && m.m[2][0] == 0.0f &&
+		   m.m[2][1] == 0.0f && m.m[2][2] == 1.0f && m.m[2][3] == 0.0f &&
+		   m.m[3][0] == 0.0f && m.m[3][1] == 0.0f && m.m[3][2] == 0.0f &&
+		   m.m[3][3] == 1.0f;
+}
+
 class MatrixStack
 {
-	std::vector<RageMatrix> stack;
+	struct Entry
+	{
+		RageMatrix mat{};
+		uint64_t uRev{ 0 };
+		bool bIsIdentity{ true };
+	};
+	std::vector<Entry> stack;
 
   public:
 	MatrixStack()
-	  : stack()
+	  : stack(1)
 	{
-		stack.resize(1);
-		LoadIdentity();
+		RageMatrixIdentity(&stack.back().mat);
+		stack.back().uRev = ++g_uNextMatrixRev;
+		stack.back().bIsIdentity = true;
 	}
 
 	// Pops the top of the stack.
@@ -431,23 +451,39 @@ class MatrixStack
 	}
 
 	// Loads identity in the current matrix.
-	void LoadIdentity() { RageMatrixIdentity(&stack.back()); }
+	void LoadIdentity()
+	{
+		if (!stack.back().bIsIdentity) {
+			RageMatrixIdentity(&stack.back().mat);
+			stack.back().uRev = ++g_uNextMatrixRev;
+			stack.back().bIsIdentity = true;
+		}
+	}
 
 	// Loads the given matrix into the current matrix
-	void LoadMatrix(const RageMatrix& m) { stack.back() = m; }
+	void LoadMatrix(const RageMatrix& m)
+	{
+		stack.back().mat = m;
+		stack.back().uRev = ++g_uNextMatrixRev;
+		stack.back().bIsIdentity = IsMatrixIdentity(m);
+	}
 
 	// Right-Multiplies the given matrix to the current matrix.
 	// (transformation is about the current world origin)
 	void MultMatrix(const RageMatrix& m)
 	{
-		RageMatrixMultiply(&stack.back(), &m, &stack.back());
+		RageMatrixMultiply(&stack.back().mat, &m, &stack.back().mat);
+		stack.back().uRev = ++g_uNextMatrixRev;
+		stack.back().bIsIdentity = IsMatrixIdentity(stack.back().mat);
 	}
 
 	// Left-Multiplies the given matrix to the current matrix
 	// (transformation is about the local origin of the object)
 	void MultMatrixLocal(const RageMatrix& m)
 	{
-		RageMatrixMultiply(&stack.back(), &stack.back(), &m);
+		RageMatrixMultiply(&stack.back().mat, &stack.back().mat, &m);
+		stack.back().uRev = ++g_uNextMatrixRev;
+		stack.back().bIsIdentity = IsMatrixIdentity(stack.back().mat);
 	}
 
 	// Right multiply the current matrix with the computed rotation
@@ -545,11 +581,20 @@ class MatrixStack
 	}
 
 	// Obtain the current matrix at the top of the stack
-	const RageMatrix* GetTop() const { return &stack.back(); }
-	void SetTop(const RageMatrix& m) { stack.back() = m; }
+	const RageMatrix* GetTop() const { return &stack.back().mat; }
+	uint64_t GetRev() const { return stack.back().uRev; }
+	bool IsIdentity() const { return stack.back().bIsIdentity; }
+	void SetTop(const RageMatrix& m)
+	{
+		stack.back().mat = m;
+		stack.back().uRev = ++g_uNextMatrixRev;
+		stack.back().bIsIdentity = IsMatrixIdentity(m);
+	}
 };
 
 static RageMatrix g_CenteringMatrix;
+static uint64_t g_uCenteringRev = 1;
+static bool g_bCenteringIsIdentity = true;
 static MatrixStack g_ProjectionStack;
 static MatrixStack g_ViewStack;
 static MatrixStack g_WorldStack;
@@ -558,6 +603,8 @@ static MatrixStack g_TextureStack;
 RageDisplay::RageDisplay()
 {
 	RageMatrixIdentity(&g_CenteringMatrix);
+	g_uCenteringRev = ++g_uNextMatrixRev;
+	g_bCenteringIsIdentity = true;
 	g_ProjectionStack = MatrixStack();
 	g_ViewStack = MatrixStack();
 	g_WorldStack = MatrixStack();
@@ -614,6 +661,60 @@ const RageMatrix*
 RageDisplay::GetTextureTop() const
 {
 	return g_TextureStack.GetTop();
+}
+
+uint64_t
+RageDisplay::GetCenteringRev() const
+{
+	return g_uCenteringRev;
+}
+
+bool
+RageDisplay::IsCenteringIdentity() const
+{
+	return g_bCenteringIsIdentity;
+}
+
+uint64_t
+RageDisplay::GetProjectionRev() const
+{
+	return g_ProjectionStack.GetRev();
+}
+
+uint64_t
+RageDisplay::GetViewRev() const
+{
+	return g_ViewStack.GetRev();
+}
+
+bool
+RageDisplay::IsViewIdentity() const
+{
+	return g_ViewStack.IsIdentity();
+}
+
+uint64_t
+RageDisplay::GetWorldRev() const
+{
+	return g_WorldStack.GetRev();
+}
+
+bool
+RageDisplay::IsWorldIdentity() const
+{
+	return g_WorldStack.IsIdentity();
+}
+
+uint64_t
+RageDisplay::GetTextureRev() const
+{
+	return g_TextureStack.GetRev();
+}
+
+bool
+RageDisplay::IsTextureIdentity() const
+{
+	return g_TextureStack.IsIdentity();
 }
 
 void
@@ -976,10 +1077,25 @@ void
 RageDisplay::UpdateCentering()
 {
 	const auto& p = g_CenteringStack.back();
-	g_CenteringMatrix = GetCenteringMatrix(static_cast<float>(p.m_iTranslateX),
-										   static_cast<float>(p.m_iTranslateY),
-										   static_cast<float>(p.m_iAddWidth),
-										   static_cast<float>(p.m_iAddHeight));
+	const RageMatrix mNew =
+	  GetCenteringMatrix(static_cast<float>(p.m_iTranslateX),
+						 static_cast<float>(p.m_iTranslateY),
+						 static_cast<float>(p.m_iAddWidth),
+						 static_cast<float>(p.m_iAddHeight));
+	bool bChanged = false;
+	for (int i = 0; i < 4 && !bChanged; ++i) {
+		for (int j = 0; j < 4; ++j) {
+			if (mNew.m[i][j] != g_CenteringMatrix.m[i][j]) {
+				bChanged = true;
+				break;
+			}
+		}
+	}
+	if (bChanged) {
+		g_CenteringMatrix = mNew;
+		g_uCenteringRev = ++g_uNextMatrixRev;
+		g_bCenteringIsIdentity = IsMatrixIdentity(g_CenteringMatrix);
+	}
 }
 
 bool
@@ -1379,6 +1495,9 @@ RageCompiledGeometry::Set(const std::vector<msMesh>& vMeshes, bool bNeedsNormals
 bool
 RageDisplay::DisplayDebugModeEnabled()
 {
+	if (PREFSMAN == nullptr) {
+		return false;
+	}
 	// PREFSMAN might get destroyed before we log debug stuff for RageDisplay, so save the value for later
 	static std::optional<bool> enabled = std::nullopt;
 	if (!enabled.has_value()) {
