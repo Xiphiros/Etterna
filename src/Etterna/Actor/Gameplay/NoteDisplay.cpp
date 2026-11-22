@@ -996,19 +996,16 @@ struct StripBuffer
 	{
 		size = 512
 	};
-	RageSpriteVertex* buf;
-	RageSpriteVertex* v;
-	StripBuffer()
-	{
-		buf = static_cast<RageSpriteVertex*>(
-		  malloc(size * sizeof(RageSpriteVertex)));
-		Init();
-	}
-	~StripBuffer() { free(buf); }
+	RageSpriteVertex buf[size];
+	RageSpriteVertex* v{ nullptr };
+	StripBuffer() { Init(); }
 
 	void Init() { v = buf; }
-	void Draw() const { DISPLAY->DrawSymmetricQuadStrip(buf, v - buf); }
-	int Used() const { return v - buf; }
+	void Draw() const
+	{
+		DISPLAY->DrawSymmetricQuadStrip(buf, static_cast<int>(v - buf));
+	}
+	int Used() const { return static_cast<int>(v - buf); }
 	int Free() const { return size - Used(); }
 };
 
@@ -2084,8 +2081,8 @@ NoteColumnRenderer::DrawPrimitives()
 	// lists to the displays to draw.
 	// The vector in the NUM_PlayerNumber slot should stay empty, not worth
 	// optimizing it out. -Kyz
-	std::vector<NoteData::TrackMap::const_iterator> holds;
-	std::vector<NoteData::TrackMap::const_iterator> taps;
+	m_vHolds.clear();
+	m_vTaps.clear();
 	NoteData::TrackMap::const_iterator begin, end;
 	m_field_render_args->note_data->GetTapNoteRangeInclusive(
 	  m_column,
@@ -2105,12 +2102,12 @@ NoteColumnRenderer::DrawPrimitives()
 			case TapNoteType_AutoKeysound:
 			case TapNoteType_Fake:
 				if (!tn.result.bHidden) {
-					taps.push_back(begin);
+					m_vTaps.push_back(begin);
 				}
 				break;
 			case TapNoteType_HoldHead:
 				if (tn.HoldResult.hns != HNS_Held) {
-					holds.push_back(begin);
+					m_vHolds.push_back(begin);
 				}
 				break;
 			default:
@@ -2119,14 +2116,14 @@ NoteColumnRenderer::DrawPrimitives()
 	}
 
 	// Draw holds before taps to make sure taps dont hide behind holds
-	if (!holds.empty()) {
+	if (!m_vHolds.empty()) {
 		m_displays[PLAYER_1]->DrawHoldsInRange(
-		  *m_field_render_args, m_column_render_args, holds);
+		  *m_field_render_args, m_column_render_args, m_vHolds);
 	}
 
-	if (!taps.empty()) {
+	if (!m_vTaps.empty()) {
 		m_displays[PLAYER_1]->DrawTapsInRange(
-		  *m_field_render_args, m_column_render_args, taps);
+		  *m_field_render_args, m_column_render_args, m_vTaps);
 	}
 }
 
